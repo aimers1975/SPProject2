@@ -20,6 +20,15 @@ DESCRIPTION:  The program creates a TCP socket in the inet
 #include <unistd.h> /* close() */
 #include <stdlib.h> /* exit() */
 #include <pthread.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <sys/file.h>
+#include <sys/un.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <errno.h>
+
+
 
 #define MAXHOSTNAME 80
 #define MAX_THREADS 50
@@ -27,6 +36,14 @@ DESCRIPTION:  The program creates a TCP socket in the inet
 #define false 0
 #define COMPLETE true
 #define RUNNING false
+
+extern int errno;
+
+#define PATHMAX 255
+static char u_server_path[PATHMAX+1] = "/tmp";  /* default */
+static char u_socket_path[PATHMAX+1];
+static char u_log_path[PATHMAX+1];
+static char u_pid_path[PATHMAX+1];
 
 typedef int bool;
 
@@ -37,6 +54,111 @@ struct threadInput {
     bool threadComplete;
     int threadId;
 };
+
+/**
+ * @brief  If we are waiting reading from a pipe and
+ *  the interlocutor dies abruptly (say because
+ *  of ^C or kill -9), then we receive a SIGPIPE
+ *  signal. Here we handle that.
+ */
+void sig_pipe(int n) 
+{
+   perror("Broken pipe signal");
+}
+
+
+/**
+ * @brief Handler for SIGCHLD signal 
+ */
+void sig_chld(int n)
+{
+  int status;
+
+  fprintf(stderr, "Child terminated\n");
+  wait(&status); /* So no zombies */
+}
+
+/**
+ * @brief Initializes the current program as a daemon, by changing working 
+ *  directory, umask, and eliminating control terminal,
+ *  setting signal handlers, saving pid, making sure that only
+ *  one daemon is running. Modified from R.Stevens.
+ * @param[in] path is where the daemon eventually operates
+ * @param[in] mask is the umask typically set to 0
+ */
+void daemon_init(const char * const path, uint mask)
+{
+  pid_t pid;
+  char buff[256];
+  static FILE *log; /* for the log */
+  int fd;
+  int k;
+
+  /* put server in background (with init as parent) */
+  if ( ( pid = fork() ) < 0 ) {
+    perror("daemon_init: cannot fork");
+    exit(0);
+  } else if (pid > 0) /* The parent */
+    exit(0);
+
+  /* the child */
+
+  /* Close all file descriptors that are open */
+  for (k = getdtablesize()-1; k>0; k--)
+      close(k);
+
+  /* Redirecting stdin and stdout to /dev/null */
+  if ( (fd = open("/dev/null", O_RDWR)) < 0) {
+    perror("Open");
+    exit(0);
+  }
+  dup2(fd, STDIN_FILENO);      /* detach stdin */
+  dup2(fd, STDOUT_FILENO);     /* detach stdout */
+  close (fd);
+  /* From this point on printf and scanf have no effect */
+
+  /* Redirecting stderr to u_log_path */
+  log = fopen(u_log_path, "aw"); /* attach stderr to u_log_path */
+  fd = fileno(log);  /* obtain file descriptor of the log */
+  dup2(fd, STDERR_FILENO);
+  close (fd);
+  /* From this point on printing to stderr will go to /tmp/u-echod.log */
+
+  /* Establish handlers for signals */
+  if ( signal(SIGCHLD, sig_chld) < 0 ) {
+    perror("Signal SIGCHLD");
+    exit(1);
+  }
+  if ( signal(SIGPIPE, sig_pipe) < 0 ) {
+    perror("Signal SIGPIPE");
+    exit(1);
+  }
+
+  /* Change directory to specified directory */
+  chdir(path); 
+
+  /* Set umask to mask (usually 0) */
+  umask(mask); 
+  
+  /* Detach controlling terminal by becoming sesion leader */
+  setsid();
+
+  /* Put self in a new process group */
+  pid = getpid();
+  setpgrp(); /* GPI: modified for linux */
+
+  /* Make sure only one server is running */
+  if ( ( k = open(u_pid_path, O_RDWR | O_CREAT, 0666) ) < 0 )
+    exit(1);
+  if ( lockf(k, F_TLOCK, 0) != 0)
+    exit(0);
+
+  /* Save server's pid without closing file (so lock remains)*/
+  sprintf(buff, "%6d", pid);
+  write(k, buff, strlen(buff));
+
+  return;
+}
 
 void reusePort(int sock);
 void* EchoServe(void*);
@@ -50,13 +172,23 @@ int main(int argc, char **argv ) {
     int fromlen;
     int length;
     char ThisHost[80];
+    pid_t childpid;
     int pn;
-    int childpid;
     pthread_t p;
     struct threadInput threadInputList[MAX_THREADS];
     pthread_t threadList[MAX_THREADS];
     int currentThread = 0;
     int returnCode;
+
+     if (argc > 1) 
+        strncpy(u_server_path, argv[1], PATHMAX); /* use argv[1] */
+      strncat(u_server_path, "/", PATHMAX-strlen(u_server_path));
+      strncat(u_server_path, argv[0], PATHMAX-strlen(u_server_path));
+      strcpy(u_socket_path, u_server_path);
+      strcpy(u_pid_path, u_server_path);
+      strncat(u_pid_path, ".pid", PATHMAX-strlen(u_pid_path));
+      strcpy(u_log_path, u_server_path);
+      strncat(u_log_path, ".log", PATHMAX-strlen(u_log_path));
 
     
     sp = getservbyname("echo", "tcp");
@@ -116,38 +248,46 @@ int main(int argc, char **argv ) {
     /** accept TCP connections from clients and fork a process to serve each */
     listen(sd,4);
     fromlen = sizeof(from);
-    for(;;){
-        printf("****Waiting on new connection....\n");
-	    psd  = accept(sd, (struct sockaddr *)&from, &fromlen);
-        printf("****Got connection\n");
-        struct threadInput argin = {psd, from, RUNNING,0};
-        threadInputList[currentThread] = argin;
-        printf("****Created thread\n");
-        if ((returnCode = pthread_create(&threadList[currentThread], NULL, EchoServe, &threadInputList[currentThread]))) {
-            fprintf(stderr, "****error: pthread_create, returnCode: %d\n", returnCode);
-            return EXIT_FAILURE;
-        }
-        printf("****Thread created, incrementing current thread\n");
-        currentThread++;
-        // thread close
-        //close (sd);
-        // server close?
-        //close(psd);
 
 
-        /* block until all threads complete */
-        for (int i = 0; i < currentThread; ++i) {
-            printf("****Checking threads, current thread is: %d This [i] is: %d\n", currentThread, i);
-            struct threadInput thisInput = threadInputList[i];
-            if(thisInput.threadComplete == COMPLETE) {
-                printf("****Trying to join\n");
-                pthread_join(threadList[i], NULL);
-                printf("****Completed thread %d\n", thisInput.threadId);
-            }    
+    if((childpid = fork()) == 0) { // Child
+        for(;;){
+
+
+                printf("****Waiting on new connection....\n");
+        	    psd  = accept(sd, (struct sockaddr *)&from, &fromlen);
+                printf("****Got connection\n");
+                struct threadInput argin = {psd, from, RUNNING,0};
+                threadInputList[currentThread] = argin;
+                printf("****Created thread\n");
+                if ((returnCode = pthread_create(&threadList[currentThread], NULL, EchoServe, &threadInputList[currentThread]))) {
+                    fprintf(stderr, "****error: pthread_create, returnCode: %d\n", returnCode);
+                    return EXIT_FAILURE;
+                }
+                printf("****Thread created, incrementing current thread\n");
+                currentThread++;
+
+                /* block until all threads complete */
+                for (int i = 0; i < currentThread; ++i) {
+                    printf("****Checking threads, current thread is: %d This [i] is: %d\n", currentThread, i);
+                    struct threadInput thisInput = threadInputList[i];
+                    if(thisInput.threadComplete == COMPLETE) {
+                        printf("****Trying to join\n");
+                        pthread_join(threadList[i], NULL);
+                        printf("****Completed thread %d\n", thisInput.threadId);
+                    }    
+                }
+                printf("****Current thread is %d\n", currentThread);
+                //return EXIT_SUCCESS;
         }
-        printf("****Current thread is %d\n", currentThread);
-        //return EXIT_SUCCESS;
-    }
+    } else if (childpid < 0) {
+        perror("Fork problem\n");
+        exit(1);
+    }    
+    // thread close
+    //close (sd);
+    // server close?
+    //close(psd);
 }
 
 void* EchoServe(void* inputs) {
