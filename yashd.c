@@ -41,7 +41,7 @@ extern int errno;
 
 #define PATHMAX 255
 static char u_server_path[PATHMAX+1] = "/tmp";  /* default */
-static char u_socket_path[PATHMAX+1];
+//static char u_socket_path[PATHMAX+1];
 static char u_log_path[PATHMAX+1];
 static char u_pid_path[PATHMAX+1];
 
@@ -180,15 +180,20 @@ int main(int argc, char **argv ) {
     int currentThread = 0;
     int returnCode;
 
-     if (argc > 1) 
+    if (argc > 1) {
+        printf("Argc is greater than one\n");
+        printf("U server path is: %s", u_server_path);
         strncpy(u_server_path, argv[1], PATHMAX); /* use argv[1] */
-      strncat(u_server_path, "/", PATHMAX-strlen(u_server_path));
-      strncat(u_server_path, argv[0], PATHMAX-strlen(u_server_path));
-      strcpy(u_socket_path, u_server_path);
-      strcpy(u_pid_path, u_server_path);
-      strncat(u_pid_path, ".pid", PATHMAX-strlen(u_pid_path));
-      strcpy(u_log_path, u_server_path);
-      strncat(u_log_path, ".log", PATHMAX-strlen(u_log_path));
+    }  
+    strncat(u_server_path, "/", PATHMAX-strlen(u_server_path));
+    strncat(u_server_path, argv[0], PATHMAX-strlen(u_server_path));
+    strcpy(u_pid_path, u_server_path);
+    strncat(u_pid_path, ".pid", PATHMAX-strlen(u_pid_path));
+    strcpy(u_log_path, u_server_path);
+    strncat(u_log_path, ".log", PATHMAX-strlen(u_log_path));
+
+    daemon_init(u_server_path, 0); /* We stay in the u_server_path directory and file
+                                    creation is not restricted. */
 
     
     sp = getservbyname("echo", "tcp");
@@ -244,46 +249,43 @@ int main(int argc, char **argv ) {
 	    exit(0);
     }
     printf("Server Port is: %d\n", ntohs(server.sin_port));
+    fprintf(stderr, "The Server Port is: %d\n", ntohs(server.sin_port));
     
     /** accept TCP connections from clients and fork a process to serve each */
     listen(sd,4);
     fromlen = sizeof(from);
 
 
-    if((childpid = fork()) == 0) { // Child
-        for(;;){
+    for(;;){
 
 
-                printf("****Waiting on new connection....\n");
-        	    psd  = accept(sd, (struct sockaddr *)&from, &fromlen);
-                printf("****Got connection\n");
-                struct threadInput argin = {psd, from, RUNNING,0};
-                threadInputList[currentThread] = argin;
-                printf("****Created thread\n");
-                if ((returnCode = pthread_create(&threadList[currentThread], NULL, EchoServe, &threadInputList[currentThread]))) {
-                    fprintf(stderr, "****error: pthread_create, returnCode: %d\n", returnCode);
-                    return EXIT_FAILURE;
-                }
-                printf("****Thread created, incrementing current thread\n");
-                currentThread++;
-
-                /* block until all threads complete */
-                for (int i = 0; i < currentThread; ++i) {
-                    printf("****Checking threads, current thread is: %d This [i] is: %d\n", currentThread, i);
-                    struct threadInput thisInput = threadInputList[i];
-                    if(thisInput.threadComplete == COMPLETE) {
-                        printf("****Trying to join\n");
-                        pthread_join(threadList[i], NULL);
-                        printf("****Completed thread %d\n", thisInput.threadId);
-                    }    
-                }
-                printf("****Current thread is %d\n", currentThread);
-                //return EXIT_SUCCESS;
+        printf("****Waiting on new connection....\n");
+	    psd  = accept(sd, (struct sockaddr *)&from, &fromlen);
+        printf("****Got connection\n");
+        struct threadInput argin = {psd, from, RUNNING,0};
+        threadInputList[currentThread] = argin;
+        printf("****Created thread\n");
+        if ((returnCode = pthread_create(&threadList[currentThread], NULL, EchoServe, &threadInputList[currentThread]))) {
+            fprintf(stderr, "****error: pthread_create, returnCode: %d\n", returnCode);
+            return EXIT_FAILURE;
         }
-    } else if (childpid < 0) {
-        perror("Fork problem\n");
-        exit(1);
-    }    
+        printf("****Thread created, incrementing current thread\n");
+        currentThread++;
+
+        /* block until all threads complete */
+        for (int i = 0; i < currentThread; ++i) {
+            printf("****Checking threads, current thread is: %d This [i] is: %d\n", currentThread, i);
+            struct threadInput thisInput = threadInputList[i];
+            if(thisInput.threadComplete == COMPLETE) {
+                printf("****Trying to join\n");
+                pthread_join(threadList[i], NULL);
+                printf("****Completed thread %d\n", thisInput.threadId);
+            }    
+        }
+        printf("****Current thread is %d\n", currentThread);
+        //return EXIT_SUCCESS;
+    }
+    
     // thread close
     //close (sd);
     // server close?
