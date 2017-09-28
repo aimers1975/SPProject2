@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 #define MAX_BUFFER 200
 #define true 1
@@ -72,7 +73,7 @@ bool resetMostRecent(struct Job*);
 void printJob(struct Job*, int, bool);
 void printDoneJob(char*,int);
 static void sig_int(int);
-static void sig_tstp(int);
+//static void sig_tstp(int);
 
 
 int main(int argc, char** args) 
@@ -128,6 +129,7 @@ void runInputLoop(char* buf) {
         
         struct Command* thisCommand = parseInput(buf, buf2, &haspipe);
         if(haspipe) {
+          printf("Setting currentHasPipe true\n");
           currentHasPipe = true;
         }
 
@@ -156,6 +158,7 @@ void runInputLoop(char* buf) {
         }    
 
         if(haspipe) {
+          currentHasPipe=true;
           if (pipe(pipefd) == -1) {
               perror("pipe");
               exit(-1);
@@ -169,14 +172,40 @@ void runInputLoop(char* buf) {
              // Parent
             if(haspipe) {
                 pid_ch2 = fork();
-            }
+                fprintf(stderr,"Calling setpgid with pid1: %d and pid2: %d\n", pid_ch1,pid_ch2);
+                int ret = setpgid(pid_ch1,pid_ch1); //child2 joins the group whose group id is same as child1's pid
+                if(ret == -1 && errno == EACCES ) {
+                  fprintf(stderr, "Error is EACCES\n");
+                } else if (errno == EINVAL) {
+                  fprintf(stderr, "Error is EINVAL\n");
+
+                } else if (errno == EPERM ) {
+                  fprintf(stderr, "Error is EPERM\n");
+
+                } else if (errno == ESRCH) {
+                  fprintf(stderr, "Error is ESRCH\n");
+                }
+                fprintf(stderr,"Calling setpgid with pid1: %d and pid2: %d\n", pid_ch1,pid_ch2);
+                ret = setpgid(pid_ch2,pid_ch1); //child2 joins the group whose group id is same as child1's pid
+                if(errno == EACCES ) {
+                  fprintf(stderr, "Error is EACCES\n");
+                } else if (errno == EINVAL) {
+                  fprintf(stderr, "Error is EINVAL\n");
+
+                } else if (errno == EPERM ) {
+                  fprintf(stderr, "Error is EPERM\n");
+
+                } else if (errno == ESRCH) {
+                  fprintf(stderr, "Error is ESRCH\n");
+                }
+            } 
             if (pid_ch2 > 0) {
 
                 printf("Parent says Child2 pid = %d\n",pid_ch2);
                 if (signal(SIGINT, sig_int) == SIG_ERR)
           	        printf("signal(SIGINT) error");
-                if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
-          	        printf("signal(SIGTSTP) error");
+                //if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
+          	    //    printf("signal(SIGTSTP) error");
                 
                 if(haspipe) {
                     close(pipefd[0]); //close the pipe in the parent
@@ -185,12 +214,12 @@ void runInputLoop(char* buf) {
 
 
 
-            } else if (pid_ch2 == 0){
+            } else if(pid_ch2 == 0){
                   //Child 2
-
+                  fprintf(stderr, "starting child 2\n");
                   if(haspipe) {
                       printf("Child2 thisCommand[1] cmd: %s\nChild1 thisCommand[0] cmd: %s\n", thisCommand[1].cmd[0], thisCommand[0].cmd[0]);
-                      setpgid(0,pid_ch1); //child2 joins the group whose group id is same as child1's pid
+
                       dup2(pipefd[1],STDOUT_FILENO);
                       close(pipefd[0]);
                       currentHasPipe = true;
@@ -225,7 +254,7 @@ void runInputLoop(char* buf) {
                       cmdArray[i] = thisCommand[1].cmd[i];
                   }
                       cmdArray[thisCommand[1].numCmds] = NULL;
-                  printf("CALLING CHILD 2 EXEC (READER)!!!! : %s\n", thisCommand[1].cmd[0]);
+                  fprintf(stderr,"CALLING CHILD 2 EXEC (READER)!!!! : %s\n", thisCommand[1].cmd[0]);
                   execvpe(thisCommand[1].cmd[0], cmdArray, environ);
                     //TODO: do we ever execut here?
                   perror("There was an error with the command\n!");
@@ -237,13 +266,12 @@ void runInputLoop(char* buf) {
                   exit(1);
             }
 
-        } else {
+        } else if (pid_ch1 == 0){
             // Child 1
 
-
+            fprintf(stderr, "Starting child 1\n");
             if(haspipe) {
-                setsid(); // child 1 creates a new session and a new group and becomes leader -
-                      //   group id is same as his pid: pid_
+
                 currentHasPipe = true;
                 dup2(pipefd[0],STDIN_FILENO);
                 close(pipefd[1]);
@@ -271,7 +299,7 @@ void runInputLoop(char* buf) {
                 }
             }
 
-            perror("CALLING CHILD 1 EXEC!!!\n");
+            fprintf(stderr,"CALLING CHILD 1 EXEC!!! %s\n", thisCommand[0].cmd[0]);
             char* cmdArray[thisCommand[0].numCmds+1];
             for (int i=0; i<thisCommand[0].numCmds; i++) {
                 cmdArray[i] = thisCommand[0].cmd[i];
@@ -286,7 +314,7 @@ void runInputLoop(char* buf) {
             perror("Child 1 exiting\n");
             exit(0);
         }
-        
+        fprintf(stderr, "Back to parent\n");
         if(thisCommand[0].isForeground) {
                 int count;
             if(haspipe) {
@@ -310,17 +338,21 @@ void runInputLoop(char* buf) {
                   exit(EXIT_FAILURE);
                 }
                 printf("----------------------------Count is now %d\n", count);
-                if (WIFEXITED(status)) {
-                  printf("child %d exited, status=%d\n", pid, WEXITSTATUS(status));count++;
-                } else if (WIFSIGNALED(status)) {
-                  printf("child %d killed by signal %d\n", pid, WTERMSIG(status));count++;
-                } else if (WIFSTOPPED(status)) {
-                  printf("%d stopped by signal %d\n", pid,WSTOPSIG(status));
-                  printf("Sending CONT to %d\n", pid);
-                  //kill(pid,SIGCONT);
-                } else if (WIFCONTINUED(status)) {
-                  printf("Continuing %d\n",pid);
-                }
+                if(pid == pid_ch1 || pid == pid_ch2) {
+                    if (WIFEXITED(status)) {
+                      printf("child %d exited, status=%d\n", pid, WEXITSTATUS(status));count++;
+                    } else if (WIFSIGNALED(status)) {
+                      printf("child %d killed by signal %d\n", pid, WTERMSIG(status));count++;
+                    } else if (WIFCONTINUED(status)) {
+                      printf("Continuing %d\n",pid);
+                    }
+                } else if (pid == pid_ch1) {
+                     if (WIFSTOPPED(status)) {
+                      printf("%d stopped by signal %d\n", pid,WSTOPSIG(status));
+                      printf("Count is now %d\n", count);
+                      count = count+2;
+                    }
+                }   
             }
         } else {
             updatePID(jobs, pid_ch1);
@@ -336,10 +368,10 @@ static void sig_int(int signo) {
     printf("Sending signals to group:%d\n",pid_ch1); // group id is pid of first in pipeline
     kill(-pid_ch1,SIGINT);
 }
-static void sig_tstp(int signo) {
-    printf("Sending SIGTSTP to group:%d\n",pid_ch1); // group id is pid of first in pipeline
-    kill(-pid_ch1,SIGTSTP);
-}
+//static void sig_tstp(int signo) {
+//    printf("Sending SIGTSTP to group:%d\n",pid_ch1); // group id is pid of first in pipeline
+//    kill(-pid_ch1,SIGTSTP);
+//}
 
 void handleSignal(int signal) {
 
@@ -358,6 +390,7 @@ void handleSignal(int signal) {
             printf("Signal is: %s", signal_name);
 
             if(!currentHasPipe) {
+                printf("Got sigstop no pipe\n");
                 if(lastRemovedJobId == jobsSize-1) { 
                     pushJob(jobs, currentCmd, false,true,lastRemovedJobId,currentChildPID);
                     lastRemovedJobId = -1;
