@@ -10,6 +10,7 @@ yashd.o : yashd.c
 # make clean
 # remove all object and executables
 clean:
-	rm *.o yashd
-	rm *.o yash
+	rm *.o yashd yash yashc
+
+
 

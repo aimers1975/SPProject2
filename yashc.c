@@ -80,8 +80,8 @@ int main(int argc, char **argv ) {
     /* Construct name of socket to send to. */
     server.sin_family = AF_INET; 
     /* OR server.sin_family = hp->h_addrtype; */
-    
-    server.sin_port = htons(atoi(argv[2]));
+    server.sin_port = htons(3826);
+    //server.sin_port = htons(atoi(argv[2]));
     /*OR    server.sin_port = sp->s_port; */
     
     /*   Create socket on which to send  and receive */
@@ -181,7 +181,7 @@ void GetUserInput()
     	rc=read(0,buf, sizeof(buf));
     	if (rc == 0) break;
         if(strcmp(buf,"\n") == 0) {
-            printf("new #");
+            printf(" #");
             
         } else {
         	if (send(sd, buf, rc, 0) <0 )
