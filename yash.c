@@ -146,7 +146,41 @@ void runInputLoop(char* buf) {
           continue;
         } else if(strcmp(buf, "fg") == 0) {
           foreground();
-          printf("Bring job to foreground\n");
+          //printf("Bring job to foreground\n");
+          int count = 0;
+
+          while (count < 1) {
+              // Parent's wait processing is based on the sig_ex4.c
+              pid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
+              // wait does not take options:
+              //    waitpid(-1,&status,0) is same as wait(&status)
+              // with no options waitpid wait only for terminated child processes
+              // with options we can specify what other changes in the child's status
+              // we can respond to. Here we are saying we want to also know if the child
+              // has been stopped (WUNTRACED) or continued (WCONTINUED)
+
+              if (pid == -1) {
+                perror("waitpid");
+                exit(EXIT_FAILURE);
+              }
+              //printf("----------------------------Count is now %d\n", count);
+              if(pid == currentChildPID) {
+                  if (WIFEXITED(status)) {
+                    printf("child %d exited, status=%d\n", currentChildPID, WEXITSTATUS(status));
+                    count++;
+                  } else if (WIFSIGNALED(status)) {
+                    printf("child %d killed by signal %d\n", currentChildPID, WTERMSIG(status));
+                    count++;
+                  } else if (WIFCONTINUED(status)) {
+                    printf("Continuing %d\n",currentChildPID);
+                  } else if (WIFSTOPPED(status)) {
+                    printf("%d stopped by signal %d\n", currentChildPID,WSTOPSIG(status));
+                    //printf("Count is now %d\n", count);
+                    count++;
+                    printf("Count is now %d\n", count);
+                  }
+              }   
+          }
           continue;
         }
 
@@ -166,7 +200,7 @@ void runInputLoop(char* buf) {
         }  
 
         pid_ch1 = fork();
-      
+        currentChildPID = pid_ch1;
         if (pid_ch1 > 0) {
 
              // Parent
@@ -200,10 +234,10 @@ void runInputLoop(char* buf) {
                 }
             } 
             if (pid_ch2 > 0) {
-
-                printf("Parent says Child2 pid = %d\n",pid_ch2);
-                if (signal(SIGINT, sig_int) == SIG_ERR)
-          	        printf("signal(SIGINT) error");
+                fprintf(stderr,"Parent says Child1 pid = %d\n",pid_ch1);
+                fprintf(stderr,"Parent says Child2 pid = %d\n",pid_ch2);
+                //if (signal(SIGINT, sig_int) == SIG_ERR)
+          	    //    printf("signal(SIGINT) error");
                 //if (signal(SIGTSTP, sig_tstp) == SIG_ERR)
           	    //    printf("signal(SIGTSTP) error");
                 
@@ -217,6 +251,12 @@ void runInputLoop(char* buf) {
             } else if(pid_ch2 == 0){
                   //Child 2
                   fprintf(stderr, "starting child 2\n");
+                  signal (SIGINT, SIG_DFL);
+                  signal (SIGQUIT, SIG_DFL);
+                  signal (SIGTSTP, SIG_DFL);
+                  signal (SIGTTIN, SIG_DFL);
+                  signal (SIGTTOU, SIG_DFL);
+                  signal (SIGCHLD, SIG_DFL);
                   if(haspipe) {
                       printf("Child2 thisCommand[1] cmd: %s\nChild1 thisCommand[0] cmd: %s\n", thisCommand[1].cmd[0], thisCommand[0].cmd[0]);
 
@@ -268,7 +308,12 @@ void runInputLoop(char* buf) {
 
         } else if (pid_ch1 == 0){
             // Child 1
-
+            signal (SIGINT, SIG_DFL);
+            signal (SIGQUIT, SIG_DFL);
+            signal (SIGTSTP, SIG_DFL);
+            signal (SIGTTIN, SIG_DFL);
+            signal (SIGTTOU, SIG_DFL);
+            signal (SIGCHLD, SIG_DFL);
             fprintf(stderr, "Starting child 1\n");
             if(haspipe) {
 
@@ -314,7 +359,7 @@ void runInputLoop(char* buf) {
             perror("Child 1 exiting\n");
             exit(0);
         }
-        fprintf(stderr, "Back to parent\n");
+        //fprintf(stderr, "Back to parent\n");
         if(thisCommand[0].isForeground) {
                 int count;
             if(haspipe) {
@@ -337,20 +382,21 @@ void runInputLoop(char* buf) {
                   perror("waitpid");
                   exit(EXIT_FAILURE);
                 }
-                printf("----------------------------Count is now %d\n", count);
+                //printf("----------------------------Count is now %d\n", count);
                 if(pid == pid_ch1 || pid == pid_ch2) {
                     if (WIFEXITED(status)) {
-                      printf("child %d exited, status=%d\n", pid, WEXITSTATUS(status));count++;
+                      printf("child %d exited, status=%d\n", pid, WEXITSTATUS(status));
+                      count++;
                     } else if (WIFSIGNALED(status)) {
-                      printf("child %d killed by signal %d\n", pid, WTERMSIG(status));count++;
+                      printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
+                      count++;
                     } else if (WIFCONTINUED(status)) {
                       printf("Continuing %d\n",pid);
-                    }
-                } else if (pid == pid_ch1) {
-                     if (WIFSTOPPED(status)) {
+                    } else if (WIFSTOPPED(status)) {
                       printf("%d stopped by signal %d\n", pid,WSTOPSIG(status));
-                      printf("Count is now %d\n", count);
+                      //printf("Count is now %d\n", count);
                       count = count+2;
+                      printf("Count is now %d\n", count);
                     }
                 }   
             }
@@ -365,8 +411,9 @@ void runInputLoop(char* buf) {
 
 
 static void sig_int(int signo) {
-    printf("Sending signals to group:%d\n",pid_ch1); // group id is pid of first in pipeline
-    kill(-pid_ch1,SIGINT);
+    printf("Sending signal %d to group:%d\n",signo,currentChildPID); // group id is pid of first in pipeline
+    //kill(-pid_ch1,SIGINT);
+    kill(-currentChildPID,SIGINT);
 }
 //static void sig_tstp(int signo) {
 //    printf("Sending SIGTSTP to group:%d\n",pid_ch1); // group id is pid of first in pipeline
@@ -387,10 +434,10 @@ void handleSignal(int signal) {
             break;
         case SIGTSTP:
             signal_name = "SIGTSTP";
-            printf("Signal is: %s", signal_name);
+            //printf("Signal is: %s", signal_name);
 
             if(!currentHasPipe) {
-                printf("Got sigstop no pipe\n");
+                //printf("Got sigstop no pipe\n");
                 if(lastRemovedJobId == jobsSize-1) { 
                     pushJob(jobs, currentCmd, false,true,lastRemovedJobId,currentChildPID);
                     lastRemovedJobId = -1;
@@ -398,14 +445,14 @@ void handleSignal(int signal) {
                   pushJob(jobs, currentCmd, false,true,jobsSize,currentChildPID);
                   jobsSize++; 
                 }
-                sig_int(SIGSTOP);
+                sig_int(SIGTSTP);
             } else {
               printf("Can't background a command with a pipe.\n");
             }
            
             break;
         case SIGCHLD:
-            printf("New child created!\n");
+            //printf("New child created!\n");
             break;
         default:
             printf("Can't find signal.\n");
@@ -767,6 +814,7 @@ int foreground()
             currentCmd = current->cmd;
             printf("%s\n", currentCmd);
             currentChildPID = current->pid;
+            fprintf(stderr, "Foreground setting currentChildPID: %d\n", currentChildPID);
             lastRemovedJobId = current->id;
             removeJob(jobs,current->pid);
             kill(current->pid, SIGCONT);

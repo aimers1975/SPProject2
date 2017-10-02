@@ -1,24 +1,13 @@
-/*
-NAME:        TCPServer 
-SYNOPSIS:    TCPServer [port]
 
-DESCRIPTION:  The program creates a TCP socket in the inet 
-              listen for connections from TCPClients, 
-              accept clients into private sockets, and 
-              fork an echo process to ``serve'' the client.
-              If [port] is not specified, the program uses any available port.
-
-*/
 #include <stdio.h>
-/* socket(), bind(), recv, send */
 #include <sys/types.h>
-#include <sys/socket.h> /* sockaddr_in */
-#include <netinet/in.h> /* inet_addr() */
+#include <sys/socket.h> 
+#include <netinet/in.h> 
 #include <arpa/inet.h>
-#include <netdb.h> /* struct hostent */
-#include <string.h> /* memset() */
-#include <unistd.h> /* close() */
-#include <stdlib.h> /* exit() */
+#include <netdb.h> 
+#include <string.h> 
+#include <unistd.h> 
+#include <stdlib.h> 
 #include <pthread.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -27,6 +16,7 @@ DESCRIPTION:  The program creates a TCP socket in the inet
 #include <fcntl.h>
 #include <signal.h>
 #include <errno.h>
+#include <time.h>
 
 
 
@@ -162,6 +152,8 @@ void daemon_init(const char * const path, uint mask)
 
 void reusePort(int sock);
 void* EchoServe(void*);
+char* parseCommand(char *);
+void writeLog(char*, char*, int);
 
 int main(int argc, char **argv ) {
     int   sd, psd;
@@ -217,11 +209,14 @@ int main(int argc, char **argv ) {
     /* OR server.sin_family = hp->h_addrtype; */
     
     server.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (argc == 1)
-        server.sin_port = htons(0);  
+    if (argc == 1) {
+        fprintf(stderr, "The arg count is 1\n");
+        //server.sin_port = htons(0); 
+        server.sin_port = htons(3826); 
+    }
     else  {
-        pn = htons(atoi(argv[1])); 
-        server.sin_port =  pn;
+        fprintf(stderr, "No arguments required\n");
+        exit(1);
     }
     /*OR    server.sin_port = sp->s_port; */
     
@@ -248,8 +243,8 @@ int main(int argc, char **argv ) {
 	    perror("getting socket name");
 	    exit(0);
     }
-    printf("Server Port is: %d\n", ntohs(server.sin_port));
-    fprintf(stderr, "The Server Port is: %d\n", ntohs(server.sin_port));
+    //printf("Server Port is: %d\n", ntohs(server.sin_port));
+    fprintf(stderr, "Amy: The Server Port is: %d\n", ntohs(server.sin_port));
     
     /** accept TCP connections from clients and fork a process to serve each */
     listen(sd,4);
@@ -259,30 +254,30 @@ int main(int argc, char **argv ) {
     for(;;){
 
 
-        printf("****Waiting on new connection....\n");
+        fprintf(stderr, "****Waiting on new connection....\n");
 	    psd  = accept(sd, (struct sockaddr *)&from, &fromlen);
-        printf("****Got connection\n");
+        fprintf(stderr, "****Got connection\n");
         struct threadInput argin = {psd, from, RUNNING,0};
         threadInputList[currentThread] = argin;
-        printf("****Created thread\n");
+        fprintf(stderr, "****Created thread\n");
         if ((returnCode = pthread_create(&threadList[currentThread], NULL, EchoServe, &threadInputList[currentThread]))) {
             fprintf(stderr, "****error: pthread_create, returnCode: %d\n", returnCode);
             return EXIT_FAILURE;
         }
-        printf("****Thread created, incrementing current thread\n");
+        fprintf(stderr, "****Thread created, incrementing current thread\n");
         currentThread++;
 
         /* block until all threads complete */
         for (int i = 0; i < currentThread; ++i) {
-            printf("****Checking threads, current thread is: %d This [i] is: %d\n", currentThread, i);
+            fprintf(stderr, "****Checking threads, current thread is: %d This [i] is: %d\n", currentThread, i);
             struct threadInput thisInput = threadInputList[i];
             if(thisInput.threadComplete == COMPLETE) {
-                printf("****Trying to join\n");
+                fprintf(stderr, "****Trying to join\n");
                 pthread_join(threadList[i], NULL);
-                printf("****Completed thread %d\n", thisInput.threadId);
+                fprintf(stderr, "****Completed thread %d\n", thisInput.threadId);
             }    
         }
-        printf("****Current thread is %d\n", currentThread);
+        fprintf(stderr, "****Current thread is %d\n", currentThread);
         //return EXIT_SUCCESS;
     }
     
@@ -296,24 +291,24 @@ void* EchoServe(void* inputs) {
     struct threadInput* threadData = (struct threadInput*)inputs;
     int psd = threadData->psd;
     struct sockaddr_in from = threadData->from;
-    char buf[512];
+    char buf[1024];
     int rc;
     struct  hostent *hp, *gethostbyname();
     
-    printf("Serving %s:%d\n", inet_ntoa(from.sin_addr),
+    fprintf(stderr, "Serving %s:%d\n", inet_ntoa(from.sin_addr),
 	   ntohs(from.sin_port));
     if ((hp = gethostbyaddr((char *)&from.sin_addr.s_addr,
 			    sizeof(from.sin_addr.s_addr),AF_INET)) == NULL)
 	    fprintf(stderr, "Can't find host %s\n", inet_ntoa(from.sin_addr));
     else
-	    printf("(Name is : %s)\n", hp->h_name);
+	    fprintf(stderr, "(Name is : %s)\n", hp->h_name);
     
     /**  get data from  clients and send it back */
     for(;;){
-	    printf("\n...server is waiting...\n");
+	    fprintf(stderr, "\n...server is waiting...\n");
         if(send(psd, " #\n", 2, 0) <0 )
             perror("sending stream message");
-        printf("Sent message...\n");
+        fprintf(stderr,"Sent message...\n");
 	    if( (rc=recv(psd, buf, sizeof(buf), 0)) < 0){
 	        perror("receiving stream  message");
             threadData->threadComplete = COMPLETE;
@@ -321,18 +316,20 @@ void* EchoServe(void* inputs) {
 	    }
 	    if (rc > 0){
 	        buf[rc]='\0';
-	        printf("Received: %s\n", buf);
-	        printf("From TCP/Client: %s:%d\n", inet_ntoa(from.sin_addr),
+	        fprintf(stderr, "Received: %s\n", buf);
+            char* cmdResult = cmdResult = parseCommand(buf);
+	        fprintf(stderr, "From TCP/Client: %s:%d\n", inet_ntoa(from.sin_addr),
 		    ntohs(from.sin_port));
-	        printf("(Name is : %s)\n", hp->h_name);
-
-	        if (send(psd, buf, rc, 0) <0 )
+	        fprintf(stderr,"(Name is : %s)\n", hp->h_name);
+            fprintf(stderr,"The cmd result: %s and the size is %lu\n", cmdResult, strlen(cmdResult));
+            writeLog(cmdResult, inet_ntoa(from.sin_addr),ntohs(from.sin_port));
+	        if (send(psd, cmdResult, strlen(cmdResult), 0) <0 )
 		        perror("sending stream message");
 	    } else {
-	        printf("TCP/Client: %s:%d\n", inet_ntoa(from.sin_addr),
+	        fprintf(stderr, "TCP/Client: %s:%d\n", inet_ntoa(from.sin_addr),
 		    ntohs(from.sin_port));
-	        printf("(Name is : %s)\n", hp->h_name);
-	        printf("Disconnected..\n");
+	        fprintf(stderr,"(Name is : %s)\n", hp->h_name);
+	        fprintf(stderr, "Disconnected..\n");
 	        //close (psd);
             threadData->threadComplete = COMPLETE;
 	        return inputs;
@@ -340,6 +337,61 @@ void* EchoServe(void* inputs) {
     }
     threadData->threadComplete = COMPLETE;
     return inputs;
+}
+
+void writeLog(char * commandToLog, char* server, int port) {
+    char formatTime[20];
+    time_t t = time(NULL);
+    struct tm* tm = localtime(&t);
+    strftime(formatTime,sizeof(formatTime),"%b %d %T", tm);
+    fprintf(stderr, "%s yashd[%s:%d]: %s\n", formatTime, server, port, commandToLog);
+
+}
+
+char* parseCommand(char * thisCommand) 
+{
+    //CMD ls -l\n
+    //CMD ps -ef | more\n
+    //CTL<blank><char[c|z|d]>\n
+    int numCmds = 1;
+    char* retString = "";
+
+
+    // Find number of strings in this array
+    for(int i=0; i<strlen(thisCommand); i++) {
+        if(thisCommand[i] == ' ' || thisCommand[i] == '\0') 
+        {
+            numCmds++;
+        }
+    }
+    // Get all the strings divided by spaces
+    char** cmds = malloc(sizeof(char*) * numCmds);
+    char* token = strtok(thisCommand, " ");
+    int position = 0;
+    while(token) {
+        //printf("%s\n", token);
+        cmds[position] =token;
+        position++;
+        token = strtok(NULL, " ");
+    }
+    if(strcmp(cmds[0],"CMD") == 0) {
+        retString = "CMD\n";
+    } else if (strcmp(cmds[0],"CTL") == 0) {
+        if(strcmp(cmds[1],"c") == 0 ) {
+            retString = "Ctrl-c\n";
+            //Ctrl-c - To stop the current running command (on the server)
+            //kill(getpid(), SIGSTOP);
+        } else if (strcmp(cmds[1],"z") == 0) {
+            //Ctrl-z  - To suspend the current running command (on the server)
+            retString = "Ctrl-z\n";
+        } else {
+            retString = "Unknown command\n";
+        }
+    } else {
+        retString = "Unknown command\n";
+    }
+    fprintf(stderr, "Ret string: %s\n", retString);
+    return retString;
 }
 
 void reusePort(int s)
