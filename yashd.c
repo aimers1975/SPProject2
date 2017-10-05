@@ -449,7 +449,7 @@ void* yash(void* inputs) {
             break;
           }
         }
-        
+
         if (rc > 0){
             recBuf[rc]='\0';
             fprintf(stderr, "Received: %s\n", recBuf);
@@ -841,6 +841,7 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
 {
    
     int position = 0;
+    fprintf(stderr, "starting parse input\n");
     for(int i=0; i < 200; i++) {
         if(buf[i] == '|' && !*haspipe) {
 
@@ -856,12 +857,13 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
             buf[i] = '\0';
         }
     }
-
+    fprintf(stderr, "Removing whitespace\n");
     buf = trimTrailingWhitespace(buf);
     buf2 = trimTrailingWhitespace(buf2);
-
+    fprintf(stderr, "Calling create command\n");
     struct Command retCmd = createCommand(buf);
-
+    //TODO - start here with debug....
+    fprintf(stderr, "Starting reset of processint\n");
     // Restrict pipe and bg
     if(retCmd.isForeground == false && *haspipe) return NULL;
     if(retCmd.cmd == NULL)  return NULL;
@@ -1189,46 +1191,22 @@ void writeLog(char * commandToLog, char* server, int port) {
 
 }
 
-char* parseCommand(char * thisCommand) 
-{
-    //CMD ls -l\n
-    //CMD ps -ef | more\n
-    //CTL<blank><char[c|z|d]>\n
-    int numCmds = 1;
-    char* retString = "";
+char* parseCommand(char* thisCommand) {
 
     fprintf(stderr,"Into parse command\n");
-    // Find number of strings in this array
-    for(int i=0; i<strlen(thisCommand); i++) {
-        if(thisCommand[i] == ' ' || thisCommand[i] == '\0') 
-        {
-            numCmds++;
-        }
-    }
-    fprintf(stderr,"NumCmds: %d The command is: %s\n", numCmds, thisCommand);
-    // Get all the strings divided by spaces
-    char** cmds = malloc(sizeof(char*) * numCmds);
-    char* token = strtok(thisCommand, " ");
-    int position = 0;
-    while(token) {
-        //printf("%s\n", token);
-        cmds[position] =token;
-        position++;
-        token = strtok(NULL, " ");
-    }
-    fprintf(stderr,"cmd[0]: %s\n", cmds[0]);
-    if(strcmp(cmds[0],"CMD") == 0) {
-        fprintf(stderr,"Parsing out CMD\n");
-        //char* retString = malloc(sizeof(char*) * (strlen(cmds[0]) -4));
-        //memcpy(retString, &cmds[0][4], (sizeof(char*) * (strlen(cmds[0]) -4)));
-        retString = cmds[1];
+    char* retString = "";
+
+    if(strstr(thisCommand, "CMD") == &thisCommand[0]) {
+        fprintf(stderr,"Get substring\n");
+        retString = malloc(sizeof(char*) * (strlen(thisCommand) -4));
+        memcpy(retString, &thisCommand[4], (sizeof(char*) * (strlen(thisCommand) -4)));
         fprintf(stderr,"Return string is: %s\n", retString);
-    } else if (strcmp(cmds[0],"CTL") == 0) {
-        if(strcmp(cmds[1],"c") == 0 ) {
+    } else if(strstr(thisCommand, "CTL") == &thisCommand[0]){
+        if(strstr(thisCommand,"c") == &thisCommand[5] ) {
             retString = "Ctrl-c\n";
             //Ctrl-c - To stop the current running command (on the server)
             //kill(getpid(), SIGSTOP);
-        } else if (strcmp(cmds[1],"z") == 0) {
+        } else if (strstr(thisCommand,"z") == &thisCommand[5]) {
             //Ctrl-z  - To suspend the current running command (on the server)
             retString = "Ctrl-z\n";
         } else {
