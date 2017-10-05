@@ -29,6 +29,7 @@ char rbuf[BUFSIZE];
 void GetUserInput();
 void cleanup(char *buf);
 void handleSignal(int signal);
+char* concat(const char*, const char*);
 
 
 int rc, cc;
@@ -184,7 +185,9 @@ void GetUserInput()
             printf(" #");
             
         } else {
-        	if (send(sd, buf, rc, 0) <0 )
+            char* buf2 = concat("CMD ", buf);
+            printf("Sending %s", buf2);
+        	if (send(sd, buf2, rc+4, 0) <0 )
         	    perror("sending stream message");
         }
     }
@@ -193,3 +196,13 @@ void GetUserInput()
     kill(getppid(), 9);
     exit (0);
 }
+
+char* concat(const char *s1, const char *s2)
+{
+    char *result = malloc(strlen(s1)+strlen(s2)+1);//+1 for the null-terminator
+    //in real code you would check for errors in malloc here
+    strcpy(result, s1);
+    strcat(result, s2);
+    return result;
+}
+

@@ -1,4 +1,5 @@
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h> 
@@ -21,6 +22,7 @@
 
 
 #define MAXHOSTNAME 80
+#define MAX_BUFFER 2000
 #define MAX_THREADS 50
 #define true 1
 #define false 0
@@ -28,6 +30,7 @@
 #define RUNNING false
 
 extern int errno;
+extern char** environ;
 
 #define PATHMAX 255
 static char u_server_path[PATHMAX+1] = "/tmp";  /* default */
@@ -44,6 +47,61 @@ struct threadInput {
     bool threadComplete;
     int threadId;
 };
+
+struct Command 
+{
+    char* isRunning;
+    int pid;
+    bool isForeground;
+    bool mostRecent;
+    char** cmd;
+    int numCmds;
+    char* outfile;
+    char* infile;
+    struct Command* nextCommand;
+  
+};
+
+struct Job
+{
+    char* cmd;
+    int id;
+    int pid;
+    bool isMostRecent;
+    bool isRunning;
+    struct Job* nextJob;
+};
+
+void runInputLoop(char*);
+struct Command* parseInput(char*, char*, bool*);
+void handleSignal(int);
+char* trimTrailingWhitespace(char*);
+struct Command createCommand(char*);
+void* removeExcess(char**, int);
+char** getTokenizedList(char*, char*, int*);
+int getFileD(char*, char**, int, bool);
+void printJobs(struct Job*,int);
+void pushJob(struct Job*, char*, bool, bool, int, int);
+int removeJob(struct Job*, int);
+int removeLastJob(struct Job*);
+int updatePID(struct Job*, int);
+int foreground();
+int background(int);
+bool resetMostRecent(struct Job*);
+void printJob(struct Job*, int, bool, int);
+void printDoneJob(char*,int,int);
+void reusePort(int sock);
+void* EchoServe(void*);
+void* yash(void*);
+char* parseCommand(char *);
+void writeLog(char*, char*, int);
+
+pid_t currentChildPID=-1;
+char* currentCmd = NULL;
+bool currentHasPipe = false;
+int lastRemovedJobId = -1;
+int jobsSize = 1;
+struct Job* jobs;
 
 /**
  * @brief  If we are waiting reading from a pipe and
@@ -150,10 +208,7 @@ void daemon_init(const char * const path, uint mask)
   return;
 }
 
-void reusePort(int sock);
-void* EchoServe(void*);
-char* parseCommand(char *);
-void writeLog(char*, char*, int);
+
 
 int main(int argc, char **argv ) {
     int   sd, psd;
@@ -194,13 +249,13 @@ int main(int argc, char **argv ) {
     gethostname(ThisHost, MAXHOSTNAME);
     /* OR strcpy(ThisHost,"localhost"); */
     
-    printf("----TCP/Server running at host NAME: %s\n", ThisHost);
+    fprintf(stderr, "----TCP/Server running at host NAME: %s\n", ThisHost);
     if  ( (hp = gethostbyname(ThisHost)) == NULL ) {
         fprintf(stderr, "Can't find host %s\n", argv[1]);
         exit(-1);
     }
     bcopy ( hp->h_addr, &(server.sin_addr), hp->h_length);
-    printf("    (TCP/Server INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
+    fprintf(stderr, "    (TCP/Server INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
 
     
     
@@ -260,7 +315,7 @@ int main(int argc, char **argv ) {
         struct threadInput argin = {psd, from, RUNNING,0};
         threadInputList[currentThread] = argin;
         fprintf(stderr, "****Created thread\n");
-        if ((returnCode = pthread_create(&threadList[currentThread], NULL, EchoServe, &threadInputList[currentThread]))) {
+        if ((returnCode = pthread_create(&threadList[currentThread], NULL, yash, &threadInputList[currentThread]))) {
             fprintf(stderr, "****error: pthread_create, returnCode: %d\n", returnCode);
             return EXIT_FAILURE;
         }
@@ -291,7 +346,7 @@ void* EchoServe(void* inputs) {
     struct threadInput* threadData = (struct threadInput*)inputs;
     int psd = threadData->psd;
     struct sockaddr_in from = threadData->from;
-    char buf[1024];
+    char buf[MAX_BUFFER];
     int rc;
     struct  hostent *hp, *gethostbyname();
     
@@ -317,7 +372,7 @@ void* EchoServe(void* inputs) {
 	    if (rc > 0){
 	        buf[rc]='\0';
 	        fprintf(stderr, "Received: %s\n", buf);
-            char* cmdResult = cmdResult = parseCommand(buf);
+            char* cmdResult = parseCommand(buf);
 	        fprintf(stderr, "From TCP/Client: %s:%d\n", inet_ntoa(from.sin_addr),
 		    ntohs(from.sin_port));
 	        fprintf(stderr,"(Name is : %s)\n", hp->h_name);
@@ -337,6 +392,792 @@ void* EchoServe(void* inputs) {
     }
     threadData->threadComplete = COMPLETE;
     return inputs;
+} 
+
+void* yash(void* inputs) {
+    struct threadInput* threadData = (struct threadInput*)inputs;
+    int psd = threadData->psd;
+    struct sockaddr_in from = threadData->from;
+    char* buf;
+    char recBuf[MAX_BUFFER];
+    int rc;
+    struct  hostent *hp, *gethostbyname();
+
+    jobs = malloc(sizeof(struct Job));
+
+    fprintf(stderr, "Serving %s:%d\n", inet_ntoa(from.sin_addr),
+       ntohs(from.sin_port));
+    if ((hp = gethostbyaddr((char *)&from.sin_addr.s_addr,
+                sizeof(from.sin_addr.s_addr),AF_INET)) == NULL)
+        fprintf(stderr, "Can't find host %s\n", inet_ntoa(from.sin_addr));
+    else
+        fprintf(stderr, "(Name is : %s)\n", hp->h_name);
+            
+    while(1)
+    { 
+        buf = malloc(sizeof(char) * MAX_BUFFER);
+        char* buf2 = malloc(sizeof(char) * MAX_BUFFER);
+        char* printBuf = NULL; 
+        printBuf = malloc(sizeof(char) * MAX_BUFFER);
+        bool haspipe = false;
+        
+        int fd1, fd2, status;
+        int pipefd[2];
+        int numPaths = 0;
+
+        char* path = getenv("PATH");
+        char* currpath = malloc(strlen(path));
+        strcpy(currpath, path);
+        char** paths = getTokenizedList(currpath, ":", &numPaths);
+        //fflush(stdin);
+        fprintf(stderr, "\n...server is waiting...\n");
+        if(send(psd, " #\n", 2, 0) <0 )
+            perror("sending stream message");
+        fprintf(stderr,"Sent message...\n");
+        char* env_list[] = {};
+
+        if( (rc=recv(psd, recBuf, sizeof(recBuf), 0)) < 0){
+            perror("receiving stream  message");
+            //TODO: take out?
+            threadData->threadComplete = COMPLETE;
+            //exit(-1);
+        }
+
+        for(int i = 0; i<strlen(recBuf); i++) {
+          if(recBuf[i] == '\n') {
+            recBuf[i] = '\0';
+            break;
+          }
+        }
+        
+        if (rc > 0){
+            recBuf[rc]='\0';
+            fprintf(stderr, "Received: %s\n", recBuf);
+            fprintf(stderr, "From TCP/Client: %s:%d\n", inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+            fprintf(stderr,"(Name is : %s)\n", hp->h_name);
+       
+
+            if(recBuf == NULL) {
+                fprintf(stderr,"There was an error with the input.\n");
+                if(send(psd, "There was an error with the input.\n", 34, 0) <0 )
+                    perror("sending stream message");
+                fprintf(stderr,"Sent message...\n");
+                continue;
+            }
+            if(strcmp(recBuf,"") == 0)
+                continue;
+            buf = parseCommand(recBuf);
+            fprintf(stderr,"The cmd result: %s and the size is %lu\n", buf, strlen(buf));
+            writeLog(buf, inet_ntoa(from.sin_addr),ntohs(from.sin_port));
+            strcpy(printBuf,buf);
+            
+            struct Command* thisCommand = parseInput(buf, buf2, &haspipe);
+            fprintf(stderr,"The cmd result: ::%s:: and the size is %lu\n", thisCommand[0].cmd[0], strlen(thisCommand[0].cmd[0]));
+            if(haspipe) {
+                currentHasPipe = true;
+            }
+
+            if(thisCommand == NULL) {
+                fprintf(stderr,"There was an error with the input.\n");
+                if(send(psd, "There was an error with the input.\n", 34, 0) <0 )
+                    perror("sending stream message");
+                fprintf(stderr,"Sent message...\n");
+                continue;
+            }
+            if(strcmp(buf,"jobs") == 0) {
+                printJobs(jobs,psd);
+                continue;
+            } else if(strcmp(buf,"bg") == 0) {
+                background(psd);
+                continue;
+            } else if(strcmp(buf, "fg") == 0) {
+                pid_t ret2 = foreground();
+                int checkpid = waitpid(ret2, &status, WUNTRACED);
+                while(1) {
+                    if(checkpid == ret2) {
+                        if(WIFEXITED(status)) {                     
+                            printDoneJob(currentCmd,lastRemovedJobId,psd); 
+                            break;
+                        } else if (WIFSTOPPED(status)) {
+                            break;
+                        } else if (WIFSIGNALED(status)) {
+                            if(WTERMSIG(status) == SIGINT) {
+                                printDoneJob(currentCmd,lastRemovedJobId, psd);    
+                                break;
+                            }   
+                        }
+                    } 
+                    checkpid = waitpid(ret2, &status, WUNTRACED);
+                } 
+                continue;
+            }
+
+            if(!thisCommand->isForeground) {
+                pushJob(jobs,printBuf,true,true,jobsSize,jobsSize);
+                jobsSize++;
+            } else {
+                currentCmd = printBuf;
+            }    
+
+            if(haspipe) {
+                if(pipe(pipefd) == -1) {
+                    perror("pipe");
+                    exit(-1);
+                }
+            }
+
+            pid_t ret3 = fork();
+            currentChildPID = ret3;
+
+            if (ret3 == 0) 
+            {
+
+                if(haspipe) {
+                    dup2(pipefd[0],0);
+                    close(pipefd[1]);
+                    currentHasPipe = true;
+
+                } else if(strlen(thisCommand[0].infile) > 0) {
+                    fd2 = getFileD(thisCommand[0].infile, paths, numPaths, false);
+                    if(fd2 == -1) {
+                        printf("There was an error opening the input file.\n");
+                        if(send(psd, "There was an error opening the input file.\n", 43, 0) <0 )
+                            perror("sending stream message");
+                        fprintf(stderr,"Sent message...\n");                   
+                        // TODO: make sure jobis not in jobs list
+                        continue;
+                    } else {
+                        dup2(fd2,0);
+                    }
+                } 
+
+
+                if(strlen(thisCommand[0].outfile) > 0) {
+                    fd1 = getFileD(thisCommand[0].outfile, paths, numPaths, true);
+                    if(fd1 == -1)
+                    {
+                        if(send(psd, "There was an error opening or creating the out file.\n", 52, 0) <0 )
+                            perror("sending stream message");
+                        printf("There was an error opening or creating the out file.\n");
+                        fprintf(stderr,"Sent message...\n");
+                    } else {
+                        dup2(fd1,1);
+                    }   
+                } else {
+                    fprintf(stderr, "%%%%%%duping psd to stdout\n");
+                    dup2(psd,1);
+                }
+
+
+                //printf("READER calling exec: %s\n", thisCommand[0].cmd[0]);
+                char* cmdArray[thisCommand[0].numCmds+1];
+                for (int i=0; i<thisCommand[0].numCmds; i++) {
+                    cmdArray[i] = thisCommand[0].cmd[i];
+                    fprintf(stderr,"Creating cmd array\n");
+                }
+                cmdArray[thisCommand[0].numCmds] = NULL;
+                //printf("READER calling exec: %s\n", thisCommand[0].cmd[0]);
+                fprintf(stderr,"Calling exec: %s And cmdArray: %s and cmdArray is: %s\n",thisCommand[0].cmd[0], cmdArray[0], environ[0]);
+                int execResult = execvpe(thisCommand[0].cmd[0], cmdArray, environ);
+                //TODO: do we ever execut here?
+                printf("There was an error with the command %d\n!", execResult);
+
+                switch(errno)
+                {
+                    case E2BIG:
+                        printf("ERRORIS: E2BIG\n");
+                    break;
+                    case EACCES:
+                        printf("ERRORIS: EACCES\n");
+                    break;
+                    case EFAULT:
+                        printf("ERRORIS: EFAULT\n");
+                    break;
+                    case EINVAL:
+                        printf("ERRORIS: EINVAL\n");
+                    break;
+                    case EIO:
+                        printf("ERRORIS: EIO\n");
+                    break;
+                    case EISDIR:
+                        printf("ERRORIS: EISDIR\n");
+                    break;
+                    case ELIBBAD:
+                        printf("ERRORIS: ELIBBAD\n");
+                    break;
+                    case ELOOP:
+                        printf("ERRORIS: ELOOP\n");
+                    break;
+                    case EMFILE:
+                        printf("ERRORIS: EMFILE\n");
+                    break;
+                    case ENAMETOOLONG:
+                        printf("ERRORIS: ENAMETOOLONG\n");
+                    break;
+                    case ENFILE:
+                        printf("ERRORIS: ENFILE\n");
+                    break;
+                    case ENOENT:
+                        printf("ERRORIS: ENOENT\n");
+                    break;
+                    case ENOEXEC:
+                        printf("ERRORIS: ENOEXEC\n");
+                    break;
+                    case ENOTDIR:
+                        printf("ERRORIS: ENOTDIRv\n");
+                    break;
+                    case EPERM:
+                        printf("ERRORIS: EPERM\n");
+                    break;
+                    case ETXTBSY:
+                        printf("ERRORIS: ETXTBSY\n");
+                    break;
+                }
+                if (fd1 != -1) close(fd1);
+                if (fd2 != -1) close(fd2);
+                exit(1);
+            } else if (ret3 < 0) 
+            {
+
+            } else if (haspipe) {
+
+                pid_t ret = fork();
+                
+                if(ret ==0) { 
+                    
+                    if(haspipe) {
+                        currentHasPipe = true;
+                        dup2(pipefd[1],1);
+                        close(pipefd[0]);
+
+                    } else if(strlen(thisCommand[1].outfile) > 0) {
+
+                        fd1 = getFileD(thisCommand[1].outfile, paths, numPaths, true);
+                        if(fd1 == -1)
+                        {
+                            if(send(psd, "There was an error opening or creating the out file.\n", 52, 0) <0 )
+                                perror("sending stream message");
+                            printf("There was an error opening or creating the out file.\n");
+                            fprintf(stderr,"Sent message...\n");
+                        } else {
+                            dup2(fd1,1);
+                        }
+                    } else {
+                    fprintf(stderr, "%%%%%%duping psd to stdout\n");
+                        dup2(psd,1);
+                    }
+
+
+                    if(strlen(thisCommand[1].infile) > 0) {
+
+                        fd2 = getFileD(thisCommand[1].infile, paths, numPaths, false);
+                        if(fd2 == -1) {
+                            printf("There was an error opening the input file.\n");
+                            if(send(psd, "There was an error opening the input file.\n", 43, 0) <0 )
+                                perror("sending stream message");
+                            fprintf(stderr,"Sent message...\n");
+                            // TODO: make sure jobis not in jobs list
+                            continue;
+                        } else {
+                            dup2(fd2,0);
+                        }
+                    }
+
+                    char* cmdArray[thisCommand[1].numCmds+1];
+                    for (int i=0; i<thisCommand[1].numCmds; i++) {
+                        cmdArray[i] = thisCommand[1].cmd[i];
+                    }
+                    cmdArray[thisCommand[1].numCmds] = NULL;
+                    execvpe(thisCommand[1].cmd[0], cmdArray, environ);
+                    printf("There was an error with the command!\n");
+                    if (fd1 != -1) close(fd1);
+                    exit(2);
+
+                } else {
+
+                    close(pipefd[1]);
+                    if(thisCommand[1].isForeground) {
+                        //TODO: does this do anything?
+                        //printf("This is a forground task\n");
+                        //printf("Waiting on PID: %d\n", ret);
+                        int checkpid = waitpid(ret, &status, WUNTRACED);
+                        while(checkpid != ret && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
+                            checkpid = waitpid(ret, &status, WUNTRACED);
+                        }
+                        //printf("WIFSTOPPED1: %d\n", WIFSTOPPED(status));
+                        //printf("WIFEXITED1: %d\n", WIFEXITED(status));
+                    } else {
+                        //printf("This is a background task\n");
+                        continue;
+                    }
+                    
+                }
+                
+            }
+            if(thisCommand[0].isForeground) {
+
+                int checkpid2 = waitpid(ret3, &status, WUNTRACED);
+                //printf("Waiting on PID: %d check pid: %d\n", ret3, checkpid2);
+                while(1) {
+                   //printf("In loop\n");
+                    if(checkpid2 == ret3) {
+                        if(WIFEXITED(status)) {
+                            //printf("Exited, exit status %d\n", WEXITSTATUS(status));
+                            printJob(jobs,ret3,true, psd); 
+                            break;
+                        } else if (WIFSTOPPED(status)) {
+                            break;
+                        } else if (WIFSIGNALED(status)) {
+                            //printf("Signal is: %d\n", WTERMSIG(status));
+                            if(WTERMSIG(status) == SIGINT) {
+                                printJob(jobs,ret3,true, psd);   
+                                break;
+                            }   
+                        }
+                    } 
+                    checkpid2 = waitpid(ret3, &status, WUNTRACED);
+                }
+
+                if(WIFEXITED(status)) {
+                    //set current job ID?
+                } 
+
+                currentHasPipe = false;   
+
+            } else {
+                updatePID(jobs, ret3);
+                continue;
+            }   
+        } else {
+            fprintf(stderr, "TCP/Client: %s:%d\n", inet_ntoa(from.sin_addr),
+            ntohs(from.sin_port));
+            fprintf(stderr,"(Name is : %s)\n", hp->h_name);
+            fprintf(stderr, "Disconnected..\n");
+            //close (psd);
+            threadData->threadComplete = COMPLETE;
+            return inputs;            
+        }   
+    }
+    threadData->threadComplete = COMPLETE;
+    return inputs;
+}  
+
+void pushJob(struct Job* head, char* thisCmd, bool isRun, bool isRecent, int size, int pid)
+{
+
+    struct Job* current = head;
+
+    if(current != NULL) {
+        while(current->nextJob != NULL) {
+            current->isMostRecent = false;
+            current = current->nextJob;
+        }
+        current->isMostRecent = false;
+        current->nextJob = malloc(sizeof(struct Job));
+        current->nextJob->cmd = thisCmd;
+        current->nextJob->id = size;
+        current->nextJob->pid = pid;
+        current->nextJob->isRunning = isRun;
+        current->nextJob->isMostRecent = isRecent;
+        current->nextJob->nextJob =NULL;
+    } 
+
+}
+
+int removeJob(struct Job* jobsList, int pid) {
+    struct Job* current = jobsList;
+    struct Job* previous = NULL;
+    while(current != NULL) {
+        if(current->pid == pid)
+        {
+            previous->nextJob = current->nextJob;
+            lastRemovedJobId = current->id;
+            free(current);
+            resetMostRecent(jobsList);
+            return pid;
+        }
+        previous=current; 
+        current = current->nextJob;   
+    }
+    return -1;
+
+}
+
+bool resetMostRecent(struct Job* jobsList) {
+    struct Job* current = jobsList;
+    struct Job* previous = NULL;
+    while(current != NULL) {
+        if(current->isMostRecent == true)
+        {
+            return true;
+        }
+        previous=current; 
+        current = current->nextJob;   
+    }
+    if(previous != NULL) {
+        previous->isMostRecent = true;
+        return true;
+    } else {
+        return false;
+    }
+}
+
+int removeLastJob(struct Job* jobsList) {
+    struct Job* current = jobsList;
+    struct Job* previous = NULL;
+    while(current != NULL) {
+        previous=current;
+        if(current->nextJob == NULL) {
+            int pid = current->pid;
+            free(current);
+            previous->nextJob = NULL;
+            return pid;
+        } 
+        current = current->nextJob; 
+    }
+    return -1;
+}
+struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
+{
+   
+    int position = 0;
+    for(int i=0; i < 200; i++) {
+        if(buf[i] == '|' && !*haspipe) {
+
+            buf[i] = '\0';
+            *haspipe = true;
+            i++;
+            buf[i] = '\0';
+        } else if(buf[i] == '|' && *haspipe) {
+            return NULL;
+        } else if (*haspipe) {
+            buf2[position] = buf[i];
+            position++;
+            buf[i] = '\0';
+        }
+    }
+
+    buf = trimTrailingWhitespace(buf);
+    buf2 = trimTrailingWhitespace(buf2);
+
+    struct Command retCmd = createCommand(buf);
+
+    // Restrict pipe and bg
+    if(retCmd.isForeground == false && *haspipe) return NULL;
+    if(retCmd.cmd == NULL)  return NULL;
+
+    struct Command* cmdList;
+    struct Command retcmd2;
+
+    if(*haspipe) {
+        cmdList = malloc(2 * sizeof(struct Command));
+        cmdList[1] = retCmd;
+        retcmd2 = createCommand(buf2);
+        // Restrict pipe and bg
+        if(retcmd2.isForeground == false && *haspipe) return NULL;    
+        cmdList[0] = retcmd2;
+    } else {
+        cmdList = malloc(sizeof(struct Command));
+        cmdList[0] = retCmd;
+    }   
+
+    return cmdList;     
+}
+
+char* trimTrailingWhitespace(char* buf) {
+    char *end;
+
+    end = buf + strlen(buf) - 1;
+    while(end > buf && *end == ' ') end--;
+    *(end+1) = 0;
+
+    return buf;
+}
+
+void* removeExcess(char** buf, int trimNum) {
+    if (trimNum == 0) {
+        return NULL;
+    }
+
+    char** cmds = malloc(sizeof(char*) * trimNum);
+    memcpy(cmds, buf, (sizeof(char*) * trimNum));
+
+    return cmds;
+}
+
+struct Command createCommand(char* buf) {
+    //printf("This starting buffer is: %s\n", buf);
+    int numCmds = 1;
+    bool isFor = true;
+    char* isRunning = "Stopped";
+    // Find number of strings in this array
+    for(int i=0; i<strlen(buf); i++) {
+        if(buf[i] == ' ' || buf[i] == '\0') 
+        {
+            numCmds++;
+        }
+    }
+    // Get all the strings divided by spaces
+    char** cmds = malloc(sizeof(char*) * numCmds);
+    char* token = strtok(buf, " ");
+    int position = 0;
+    while(token) {
+        //printf("%s\n", token);
+        cmds[position] =token;
+        position++;
+        token = strtok(NULL, " ");
+    }
+
+    // Figure if this command will be a background process
+    char* infile = "";
+    char* outfile = "";
+    for(int i=0; i < numCmds; i++) {
+        if((strcmp(cmds[i],"&") == 0) && isFor) {
+            isFor = false;
+            numCmds--;
+            if(i<numCmds) {
+                struct Command thisCommand = {false, -1, false, true, NULL, -1, NULL, NULL};
+                return thisCommand;
+            }
+            break;
+        } 
+    }   
+
+    // Get in and outfiles
+    int lastCmd = 0;
+    for(int i=0; i<numCmds; i++) {
+       if (strcmp(cmds[i], "<") == 0) {
+            infile = cmds[i + 1];
+            //printf("Found <\n");
+            if(lastCmd == 0) lastCmd = i;
+        } else if (strcmp(cmds[i], ">") == 0) {
+            outfile = cmds[i + 1];
+            //printf("Found >\n");
+            if(lastCmd == 0) lastCmd = i;
+        } 
+    }   
+    if (lastCmd < numCmds && lastCmd != 0) numCmds = lastCmd;
+    cmds = removeExcess(cmds, numCmds);
+    struct Command thisCommand = {isRunning, -1, isFor, true, cmds, numCmds, outfile, infile};
+
+    return thisCommand;
+}
+
+int getFileD(char* file, char** paths, int num, bool create) {
+
+    int filed ;
+    if (access(file, F_OK) != -1) {
+        filed = open(file, O_RDWR|O_CREAT, 0777);
+        return filed;
+    }
+    char* filepath;
+    for(int i=0; i< num; i++) {
+        filepath = malloc(strlen(paths[i]) + strlen(file) + 2);
+        strcpy(filepath, paths[i]);
+        strcat(filepath, "/");
+        strcat(filepath, file);
+        if(access(filepath, F_OK) != -1) 
+        {
+            filed = open(filepath, O_RDWR|O_CREAT, 0777);
+            return filed;
+        }
+    }
+    if(create)
+    {   
+        filed = open(file, O_RDWR|O_CREAT, 0777);
+        return filed;
+    }    
+    return -1;
+
+}
+
+int updatePID(struct Job* jobsList, int pid) {
+    struct Job* current = jobsList;
+    struct Job* previous = NULL;
+    while(current != NULL) {
+        previous=current;
+        if(current->nextJob == NULL) {
+            current->pid = pid;
+            return pid;
+        } 
+        current = current->nextJob; 
+    }
+    return -1;  
+}
+
+void printJobs(struct Job* jobsList, int psd) {
+
+    struct Job* current = jobsList;
+    while(current != NULL) {
+        if(current->cmd != NULL)
+        {
+            char* msg;
+            asprintf(&msg, "[%d]", current->id);
+            if(send(psd, msg, strlen(msg), 0) <0 )
+                perror("sending stream message");
+            fprintf(stderr,"Sent message...\n");
+            if(current->isMostRecent) {
+                asprintf(&msg, " +");
+                if(send(psd, msg, strlen(msg), 0) <0 )
+                    perror("sending stream message");
+                fprintf(stderr,"Sent message...\n");
+            } else {
+                asprintf(&msg, " -");
+                if(send(psd, msg, strlen(msg), 0) <0 )
+                    perror("sending stream message");
+                fprintf(stderr,"Sent message...\n");
+            }
+            if(current->isRunning) { 
+                asprintf(&msg, " Running ");
+                if(send(psd, msg, strlen(msg), 0) <0 )
+                    perror("sending stream message");
+                fprintf(stderr,"Sent message...\n");
+            } else {
+                asprintf(&msg, " Stopped ");
+                printf(" %s\n", current->cmd);
+                if(send(psd, msg, strlen(msg), 0) <0 )
+                    perror("sending stream message");
+                fprintf(stderr,"Sent message...\n");
+            }
+            //printf(" PID: %d\n", current->pid);
+        } 
+        current = current->nextJob;   
+    }
+}
+
+void printJob(struct Job* jobsList, int pid, bool jobDone, int psd) {
+
+    struct Job* current = jobsList;
+    while(current != NULL) {
+        if(current->cmd != NULL)
+        {
+            if(current->pid == pid) {
+                char* msg;
+                asprintf(&msg,"[%d]", current->id);
+                if(send(psd, msg, strlen(msg), 0) <0 )
+                    perror("sending stream message");
+                fprintf(stderr,"Sent message...\n");
+                if(current->isMostRecent) { 
+                    asprintf(&msg, " +");
+                    if(send(psd, msg, strlen(msg), 0) <0 )
+                        perror("sending stream message");
+                    fprintf(stderr,"Sent message...\n");
+                } else {
+                    asprintf(&msg, " -");
+                    if(send(psd, msg, strlen(msg), 0) <0 )
+                        perror("sending stream message");
+                    fprintf(stderr,"Sent message...\n");
+                }
+                if(current->isRunning) {
+                    asprintf(&msg, " Running ");
+                    if(send(psd, msg, strlen(msg), 0) <0 )
+                        perror("sending stream message");
+                    fprintf(stderr,"Sent message...\n");
+                } else if (jobDone) {
+                    asprintf(&msg, " Done ");
+                    if(send(psd, msg, strlen(msg), 0) <0 )
+                        perror("sending stream message");
+                    fprintf(stderr,"Sent message...\n");
+                } else {
+                    asprintf(&msg, " Stopped ");
+                    if(send(psd, msg, strlen(msg), 0) <0 )
+                        perror("sending stream message");
+                    fprintf(stderr,"Sent message...\n");
+                }
+                asprintf(&msg, " %s\n", current->cmd);
+                if(send(psd, msg, strlen(msg), 0) <0 )
+                    perror("sending stream message");
+                fprintf(stderr,"Sent message...\n");
+                //printf(" PID: %d\n", current->pid);
+                return;
+            }    
+        } 
+        current = current->nextJob;   
+    }
+}
+
+void printDoneJob(char* cmd,int jobId, int psd) {
+    char * msg;
+    asprintf(&msg, "\n[%d] + Done  %s\n", jobId, cmd);
+    if(send(psd, msg, strlen(msg), 0) <0 )
+        perror("sending stream message");
+    fprintf(stderr,"Sent message...\n");
+}
+int foreground(int psd) 
+{
+    struct Job* current = jobs;
+    while(current != NULL) {
+        if(current->cmd != NULL) 
+        {
+            if(current->isMostRecent) 
+            {
+
+                currentCmd = current->cmd;
+                char* msg;
+                asprintf(&msg, "%s\n", currentCmd);
+                if(send(psd, msg, strlen(msg), 0) <0 )
+                    perror("sending stream message");
+                fprintf(stderr,"Sent message...\n");
+                currentChildPID = current->pid;
+                lastRemovedJobId = current->id;
+                removeJob(jobs,current->pid);
+                kill(current->pid, SIGCONT);
+                return current->pid;
+            }               
+        } 
+        current = current->nextJob;   
+    }
+
+    return -1;
+}
+
+int background(int psd) 
+{
+    struct Job* current = jobs;
+    while(current != NULL) {
+        if(current->cmd != NULL) 
+        {
+            if(current->isMostRecent) 
+            {
+                if(!current->isRunning) {
+                    currentCmd = current->cmd;
+                    //printf("%s\n", currentCmd);
+                    currentChildPID = current->pid;
+                    current->isRunning = true;
+                    printJob(jobs,currentChildPID,false,psd);
+                    kill(current->pid, SIGCONT);
+                    return current->pid;
+                }    
+            }               
+        } 
+        current = current->nextJob;   
+    }
+    return -1;
+}
+
+
+char** getTokenizedList(char* breakString, char* search, int* numStrings) {
+
+    for(int i=0; i<strlen(breakString); i++) {
+        if(breakString[i] == ':') (*numStrings)++;
+    }
+    if(strlen(breakString) >= 1 && (*numStrings) == 0) 
+    {
+        (*numStrings)=1;
+    }
+    else if (strlen(breakString) >= 1)
+    {
+        (*numStrings)++;
+    }    
+    char** pathList = malloc(sizeof(char*) * (*numStrings));
+    char* token = strtok(breakString, search);
+    int position = 0;
+    while(token) {
+        pathList[position] =token;
+        position++;
+        token = strtok(NULL, search);
+    }
+    return pathList;
 }
 
 void writeLog(char * commandToLog, char* server, int port) {
@@ -356,7 +1197,7 @@ char* parseCommand(char * thisCommand)
     int numCmds = 1;
     char* retString = "";
 
-
+    fprintf(stderr,"Into parse command\n");
     // Find number of strings in this array
     for(int i=0; i<strlen(thisCommand); i++) {
         if(thisCommand[i] == ' ' || thisCommand[i] == '\0') 
@@ -364,6 +1205,7 @@ char* parseCommand(char * thisCommand)
             numCmds++;
         }
     }
+    fprintf(stderr,"NumCmds: %d The command is: %s\n", numCmds, thisCommand);
     // Get all the strings divided by spaces
     char** cmds = malloc(sizeof(char*) * numCmds);
     char* token = strtok(thisCommand, " ");
@@ -374,8 +1216,13 @@ char* parseCommand(char * thisCommand)
         position++;
         token = strtok(NULL, " ");
     }
+    fprintf(stderr,"cmd[0]: %s\n", cmds[0]);
     if(strcmp(cmds[0],"CMD") == 0) {
-        retString = "CMD\n";
+        fprintf(stderr,"Parsing out CMD\n");
+        //char* retString = malloc(sizeof(char*) * (strlen(cmds[0]) -4));
+        //memcpy(retString, &cmds[0][4], (sizeof(char*) * (strlen(cmds[0]) -4)));
+        retString = cmds[1];
+        fprintf(stderr,"Return string is: %s\n", retString);
     } else if (strcmp(cmds[0],"CTL") == 0) {
         if(strcmp(cmds[1],"c") == 0 ) {
             retString = "Ctrl-c\n";
@@ -399,8 +1246,8 @@ void reusePort(int s)
     int one=1;
     
     if ( setsockopt(s,SOL_SOCKET,SO_REUSEADDR,(char *) &one,sizeof(one)) == -1 )
-	{
-	    printf("error in setsockopt,SO_REUSEPORT \n");
-	    exit(-1);
-	}
-}      
+    {
+        printf("error in setsockopt,SO_REUSEPORT \n");
+        exit(-1);
+    }
+}
