@@ -5,12 +5,12 @@
 int main(int argc, char **argv) {
 	
 	int i=0;
-	printf("\ncmdline args count is %d", argc);
+	printf("\ncmdline args count is %d\n", argc);
 
-    printf("\nexe name=%s", argv[0]);
+    printf("\nexe name=%s\n", argv[0]);
 
     for(int i=1; i< argc; i++) {
-	    printf("\narg%d=%s", i, argv[i]);
+	    printf("\narg%d=%s\n", i, argv[i]);
 	}
 
 	printf("\n");
