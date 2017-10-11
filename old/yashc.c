@@ -116,8 +116,8 @@ int main(int argc, char **argv ) {
 	   printf("(Name is : %s)\n", hp->h_name);
     childpid = fork();
     if (childpid == 0) {
-        signal(SIGTSTP, SIG_IGN);
-        signal(SIGINT, SIG_IGN);
+     //   signal(SIGTSTP, SIG_IGN);
+     //   signal(SIGINT, SIG_IGN);
 	    GetUserInput();
     } else {
     
@@ -133,6 +133,7 @@ int main(int argc, char **argv ) {
     	if (rc > 0){
     	    rbuf[rc]='\0';
     	    printf("Rec: %s", rbuf);
+            fflush(stdout);
     	}else {
     	    printf("Disconnected..\n");
     	    close (sd);
@@ -168,19 +169,26 @@ void GetUserInput()
 void handleSignal(int signal) {
     const char* signal_name;
     sigset_t pending;
-
+    perror("In handle signle\n");
+    fflush(stderr);
     switch(signal) {
         case SIGINT:
             signal_name = "SIGINT";
-            char * buf3 = "CTL c\0";
+            printf("Sending CTL c\n");
+            fflush(stdout);
+            char * buf3 = "CTL c\n\0";
             if (send(sd, buf3, strlen(buf3), 0) <0 )
                 perror("sending stream message");
+            fflush(sd);
             break;
         case SIGTSTP:
             signal_name = "SIGTSTP";
-            char* buf2 = "CTL z\0";
+            printf("Sending CTL z\n");
+            fflush(stdout);
+            char* buf2 = "CTL z\n\0";
             if (send(sd, buf2, strlen(buf2), 0) <0 )
                 perror("sending stream message");
+            fflush(sd);
             break;
         default:
             printf("Can't find signal.\n");

@@ -132,7 +132,7 @@ int main(int argc, char **argv ) {
 	}
 	if (rc > 0){
 	    rbuf[rc]='\0';
-	    printf("\n%s", rbuf);
+	    printf("%s", rbuf);
         fflush(stdout);
 	}else {
 	    printf("Disconnected..\n");
@@ -159,12 +159,14 @@ void handleSignal(int signal) {
             char * buf3 = "CTL c\0";
             if (send(sd, buf3, strlen(buf3), 0) <0 )
                 perror("sending stream message");
+            fflush(stdout);
             break;
         case SIGTSTP:
             signal_name = "SIGTSTP";
             char* buf2 = "CTL z\0";
             if (send(sd, buf2, strlen(buf2), 0) <0 )
                 perror("sending stream message");
+            fflush(stdout);
             break;
         default:
             printf("Can't find signal.\n");

@@ -92,6 +92,7 @@ bool resetMostRecent(struct Job*);
 void printJob(struct Job*, int, bool, int);
 void printDoneJob(char*,int,int);
 void reusePort(int sock);
+void setTimeout(int);
 void* EchoServe(void*);
 void* yash(void*);
 char* parseCommand(char *);
@@ -126,7 +127,7 @@ void sig_chld(int n)
 {
   int status;
 
-  fprintf(stderr, "Child terminated\n");
+  //fprintf(stderr, "Child terminated\n");
   //wait(&status); /* So no zombies */
 }
 
@@ -298,9 +299,11 @@ int main(int argc, char **argv ) {
 	    perror("opening stream socket");
 	    exit(-1);
     }
+
     /** this allow the server to re-start quickly instead of fully wait
 	for TIME_WAIT which can be as large as 2 minutes */
     reusePort(sd);
+    //setTimeout(sd);
     if ( bind( sd, (struct sockaddr *) &server, sizeof(server) ) < 0 ) {
 	    close(sd);
 	    perror("binding name to stream socket");
@@ -456,6 +459,7 @@ void* yash(void* inputs) {
                 pid_t ret2 = foreground();
                 int checkpid = waitpid(ret2, &status, WUNTRACED);
                 while(1) {
+                    fprintf(stderr," WAITING ON PIC\n");
                     if(checkpid == ret2) {
                         if(WIFEXITED(status)) {                     
                             printDoneJob(currentCmd,lastRemovedJobId,psd); 
@@ -666,6 +670,7 @@ void* yash(void* inputs) {
                         //printf("Waiting on PID: %d\n", ret);
                         int checkpid = waitpid(ret, &status, WUNTRACED);
                         while(checkpid != ret && (!WIFSTOPPED(status) && !WIFEXITED(status))) {
+                            fprintf(stderr," WAITING ON PID 2\n");
                             checkpid = waitpid(ret, &status, WUNTRACED);
                         }
                         //printf("WIFSTOPPED1: %d\n", WIFSTOPPED(status));
@@ -680,10 +685,11 @@ void* yash(void* inputs) {
             }
             if(thisCommand[0].isForeground) {
 
-                int checkpid2 = waitpid(ret3, &status, WUNTRACED);
+                int checkpid2 = waitpid(ret3, &status, WUNTRACED|WNOHANG);
                 //printf("Waiting on PID: %d check pid: %d\n", ret3, checkpid2);
                 while(1) {
                    //printf("In loop\n");
+                    //fprintf(stderr," WAITING ON PID 3\n");                  
                     if(checkpid2 == ret3) {
                         if(WIFEXITED(status)) {
                             //printf("Exited, exit status %d\n", WEXITSTATUS(status));
@@ -699,7 +705,27 @@ void* yash(void* inputs) {
                             }   
                         }
                     } 
-                    checkpid2 = waitpid(ret3, &status, WUNTRACED);
+                    if( (rc=recv(psd, recBuf, sizeof(recBuf), MSG_DONTWAIT)) < 0){
+                        //perror("ERROR receiving stream  message");
+                        //TODO: take out?
+                        //exit(-1);
+                    }  
+                    if(rc > 0) {
+                        fprintf(stderr," GOT A CONTROL\n");
+                        if(strstr(recBuf, "CTL") == &recBuf[0]){
+                            if(strstr(recBuf,"c") == &recBuf[4] ) {
+                                //Ctrl-c - To stop the current running command (on the server)
+                                fprintf(stderr," GOT A CONTROL, sending SIGSTOP to PID: %d\n", ret3);
+                                kill(ret3, SIGSTOP);
+                            } else if (strstr(recBuf,"z") == &recBuf[4]) {
+                                //Ctrl-z  - To suspend the current running command (on the server)
+                                kill(ret3, SIGINT);   
+                                fprintf(stderr," GOT A CONTROL, sending SIGINT to PID: %d\n", ret3);                            
+                            }
+                        } 
+                        break;                           
+                    }
+                    checkpid2 = waitpid(ret3, &status, WUNTRACED|WNOHANG);
                 }
 
                 if(WIFEXITED(status)) {
@@ -1193,7 +1219,9 @@ void writeLog(FILE* log, char * commandToLog, char* server, int port) {
 
 char* parseCommand(char* thisCommand) {
 
-    //fprintf(stderr,"Into parse command\n");
+    fprintf(stderr,"Into parse command: %s\n", thisCommand);
+    fprintf(stderr,"thisCommand[0]: %s\n", &thisCommand[0]);
+    fprintf(stderr,"Into parse command: %s\n", &thisCommand[4]);
     char* retString = "";
 
     if(strstr(thisCommand, "CMD") == &thisCommand[0]) {
@@ -1202,11 +1230,11 @@ char* parseCommand(char* thisCommand) {
         memcpy(retString, &thisCommand[4], (sizeof(char*) * (strlen(thisCommand) -4)));
         fprintf(stderr,"Return string is: %s\n", retString);
     } else if(strstr(thisCommand, "CTL") == &thisCommand[0]){
-        if(strstr(thisCommand,"c") == &thisCommand[5] ) {
+        if(strstr(thisCommand,"c") == &thisCommand[4] ) {
             retString = "Ctrl-c\n";
             //Ctrl-c - To stop the current running command (on the server)
             //kill(getpid(), SIGSTOP);
-        } else if (strstr(thisCommand,"z") == &thisCommand[5]) {
+        } else if (strstr(thisCommand,"z") == &thisCommand[4]) {
             //Ctrl-z  - To suspend the current running command (on the server)
             retString = "Ctrl-z\n";
         } else {
@@ -1215,7 +1243,7 @@ char* parseCommand(char* thisCommand) {
     } else {
         retString = "Unknown command\n";
     }
-    //fprintf(stderr, "Ret string: %s\n", retString);
+    fprintf(stderr, "Ret string: %s\n", retString);
     return retString;
 }
 
@@ -1226,6 +1254,19 @@ void reusePort(int s)
     if ( setsockopt(s,SOL_SOCKET,SO_REUSEADDR,(char *) &one,sizeof(one)) == -1 )
     {
         printf("error in setsockopt,SO_REUSEPORT \n");
+        exit(-1);
+    }
+}
+
+void setTimeout(int s)
+{
+    struct timeval tv;
+    tv.tv_sec = 2;
+    tv.tv_usec = 0;
+    
+    if ( setsockopt(s,SOL_SOCKET,SO_RCVTIMEO,(const char *) &tv, sizeof(struct timeval)) == -1 )
+    {
+        fprintf(stderr, "error in setsockopt,SO_RCVTIMEO \n");
         exit(-1);
     }
 }

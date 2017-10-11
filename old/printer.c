@@ -18,6 +18,7 @@ int main(int argc, char **argv) {
 	while(1) {
 		sleep(5);
 		printf("printing again\n");
+		fflush(stdout);
 	}
 	return 0;
 }
