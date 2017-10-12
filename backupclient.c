@@ -22,7 +22,7 @@ DESCRIPTION:    The program creates a stream socket in the inet domain,
 #include <signal.h>
 
 #define MAXHOSTNAME 80
-#define BUFSIZE 1024
+#define BUFSIZE 8192
 
 char buf[BUFSIZE];
 char rbuf[BUFSIZE];
@@ -159,12 +159,14 @@ void handleSignal(int signal) {
             char * buf3 = "CTL c\0";
             if (send(sd, buf3, strlen(buf3), 0) <0 )
                 perror("sending stream message");
+            fflush(stdout);
             break;
         case SIGTSTP:
             signal_name = "SIGTSTP";
             char* buf2 = "CTL z\0";
             if (send(sd, buf2, strlen(buf2), 0) <0 )
                 perror("sending stream message");
+            fflush(stdout);
             break;
         default:
             printf("Can't find signal.\n");
@@ -177,7 +179,6 @@ void GetUserInput()
     for(;;) {
         fflush(stdout);
     	//Check input for newline, and if so, reprint prompt.
-        fflush(stdout);
     	cleanup(buf);
     	rc=read(0,buf, sizeof(buf));
     	if (rc == 0) break;
@@ -186,7 +187,7 @@ void GetUserInput()
             
         } else {
             char* buf2 = concat("CMD ", buf);
-            printf("Sending %s", buf2);
+            //printf("Sending %s", buf2);
         	if (send(sd, buf2, rc+4, 0) <0 )
         	    perror("sending stream message");
         }
