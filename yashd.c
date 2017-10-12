@@ -429,12 +429,67 @@ void* yash(void* inputs) {
             }
             if(strcmp(recBuf,"") == 0)
                 continue;
+
             buf = parseCommand(recBuf);
             fprintf(stderr, "Buf is: %s\n", buf);
             //fprintf(stderr, "sin_addr: %s\n",from.sin_addr);
             //fprintf(stderr, "sin_port: %s\n", from.sin_port);
+            if(strcmp(buf,"Ctrl-c\n") == 0 || strcmp(buf,"Ctrl-z\n") == 0) {
+                continue;
+            }
             writeLog(cmdLog, buf, inet_ntoa(from.sin_addr),ntohs(from.sin_port));
+            if(strcmp(buf,"jobs ") == 0) {
+                fprintf(stderr, "GOT JOBS CMD\n");
+                printJobs(jobs,psd);
+                continue;
+            } else if(strcmp(buf,"bg ") == 0) {
+                background(psd);
+                continue;
+            } else if(strcmp(buf, "fg ") == 0) {
+                pid_t ret2 = foreground();
+                int checkpid = waitpid(ret2, &status, WUNTRACED|WNOHANG);
+                while(1) {
+                    fprintf(stderr," WAITING ON PID FG\n");
+                    if(checkpid == ret2) {
+                        if(WIFEXITED(status)) {                     
+                            printDoneJob(currentCmd,lastRemovedJobId,psd); 
+                            break;
+                        } else if (WIFSTOPPED(status)) {
+                            break;
+                        } else if (WIFSIGNALED(status)) {
+                            if(WTERMSIG(status) == SIGINT) {
+                                printDoneJob(currentCmd,lastRemovedJobId, psd);    
+                                break;
+                            }   
+                        }
+                    }
+
+                    if( (rc=recv(psd, recBuf, sizeof(recBuf), MSG_DONTWAIT)) < 0){
+                        //perror("ERROR receiving stream  message");
+                        //TODO: take out?
+                        //exit(-1);
+                    }  
+                    if(rc > 0) {
+                        fprintf(stderr," GOT A CONTROL\n");
+                        if(strstr(recBuf, "CTL") == &recBuf[0]){
+                            if(strstr(recBuf,"c") == &recBuf[4] ) {
+                                //Ctrl-c - To stop the current running command (on the server)
+                                fprintf(stderr," GOT A CONTROL, sending SIGSTOP to PID: %d\n", ret2);
+                                kill(ret2, SIGKILL);
+                            } else if (strstr(recBuf,"z") == &recBuf[4]) {
+                                //Ctrl-z  - To suspend the current running command (on the server)
+                                kill(ret2, SIGINT);   
+                                fprintf(stderr," GOT A CONTROL, sending SIGINT to PID: %d\n", ret2);                            
+                            }
+                        } 
+                        break;                           
+                    } 
+                    checkpid = waitpid(ret2, &status, WUNTRACED|WNOHANG);
+                } 
+                continue;
+            }
             strcpy(printBuf,buf);
+            fprintf(stderr, "Printbuf for background: %s\n", printBuf);
             char* buf2 = "";
             buf2 = malloc(sizeof(char) * strlen(buf));
             struct Command* thisCommand = parseInput(buf, buf2, &haspipe);
@@ -449,36 +504,10 @@ void* yash(void* inputs) {
                 fprintf(stderr,"Sent message...\n");
                 continue;
             }
-            if(strcmp(buf,"jobs") == 0) {
-                printJobs(jobs,psd);
-                continue;
-            } else if(strcmp(buf,"bg") == 0) {
-                background(psd);
-                continue;
-            } else if(strcmp(buf, "fg") == 0) {
-                pid_t ret2 = foreground();
-                int checkpid = waitpid(ret2, &status, WUNTRACED);
-                while(1) {
-                    fprintf(stderr," WAITING ON PIC\n");
-                    if(checkpid == ret2) {
-                        if(WIFEXITED(status)) {                     
-                            printDoneJob(currentCmd,lastRemovedJobId,psd); 
-                            break;
-                        } else if (WIFSTOPPED(status)) {
-                            break;
-                        } else if (WIFSIGNALED(status)) {
-                            if(WTERMSIG(status) == SIGINT) {
-                                printDoneJob(currentCmd,lastRemovedJobId, psd);    
-                                break;
-                            }   
-                        }
-                    } 
-                    checkpid = waitpid(ret2, &status, WUNTRACED);
-                } 
-                continue;
-            }
+
 
             if(!thisCommand->isForeground) {
+                fprintf(stderr,"This is background job pushing printBuf: %s\n", printBuf);
                 pushJob(jobs,printBuf,true,true,jobsSize,jobsSize);
                 jobsSize++;
             } else {
@@ -716,7 +745,7 @@ void* yash(void* inputs) {
                             if(strstr(recBuf,"c") == &recBuf[4] ) {
                                 //Ctrl-c - To stop the current running command (on the server)
                                 fprintf(stderr," GOT A CONTROL, sending SIGSTOP to PID: %d\n", ret3);
-                                kill(ret3, SIGSTOP);
+                                kill(ret3, SIGKILL);
                             } else if (strstr(recBuf,"z") == &recBuf[4]) {
                                 //Ctrl-z  - To suspend the current running command (on the server)
                                 kill(ret3, SIGINT);   
@@ -759,7 +788,7 @@ void pushJob(struct Job* head, char* thisCmd, bool isRun, bool isRecent, int siz
 {
 
     struct Job* current = head;
-
+    fprintf(stderr, "Pushing job for: %s\n", thisCmd);
     if(current != NULL) {
         while(current->nextJob != NULL) {
             current->isMostRecent = false;
@@ -1025,31 +1054,24 @@ void printJobs(struct Job* jobsList, int psd) {
             asprintf(&msg, "[%d]", current->id);
             if(send(psd, msg, strlen(msg), 0) <0 )
                 perror("sending stream message");
-            fprintf(stderr,"Sent message...\n");
             if(current->isMostRecent) {
                 asprintf(&msg, " +");
                 if(send(psd, msg, strlen(msg), 0) <0 )
                     perror("sending stream message");
-                fprintf(stderr,"Sent message...\n");
             } else {
                 asprintf(&msg, " -");
                 if(send(psd, msg, strlen(msg), 0) <0 )
                     perror("sending stream message");
-                fprintf(stderr,"Sent message...\n");
             }
             if(current->isRunning) { 
-                asprintf(&msg, " Running ");
+                asprintf(&msg, " Running %s\n", current->cmd);
                 if(send(psd, msg, strlen(msg), 0) <0 )
                     perror("sending stream message");
-                fprintf(stderr,"Sent message...\n");
             } else {
-                asprintf(&msg, " Stopped ");
-                printf(" %s\n", current->cmd);
+                asprintf(&msg, " Stopped %s\n", current->cmd);
                 if(send(psd, msg, strlen(msg), 0) <0 )
                     perror("sending stream message");
-                fprintf(stderr,"Sent message...\n");
             }
-            //printf(" PID: %d\n", current->pid);
         } 
         current = current->nextJob;   
     }
@@ -1243,7 +1265,7 @@ char* parseCommand(char* thisCommand) {
     } else {
         retString = "Unknown command\n";
     }
-    fprintf(stderr, "Ret string: %s\n", retString);
+    fprintf(stderr, "Ret string::%s::\n", retString);
     return retString;
 }
 
