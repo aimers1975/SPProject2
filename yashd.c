@@ -619,116 +619,117 @@ void* yash(void* inputs) {
                 if (fd1 != -1) close(fd1);
                 if (fd2 != -1) close(fd2);
                 exit(1);
-            } else if (ret3 < 0) 
+            } else if (ret3 > 0) 
             {
 
-            } else if (haspipe) {
+                if (haspipe) {
 
-                pid_t ret = fork();
-                
-                if(ret ==0) { 
+                    pid_t ret = fork();
                     
-                    if(haspipe) {
-                        currentHasPipe = true;
-                        dup2(pipefd[1],1);
-                        close(pipefd[0]);
+                    if(ret ==0) { 
+                        
+                        if(haspipe) {
+                            currentHasPipe = true;
+                            dup2(pipefd[1],1);
+                            close(pipefd[0]);
 
-                    } else if(strlen(thisCommand[1].outfile) > 0) {
+                        } else if(strlen(thisCommand[1].outfile) > 0) {
 
-                        fd1 = getFileD(thisCommand[1].outfile, paths, numPaths, true);
-                        if(fd1 == -1)
-                        {
-                            if(send(psd, "There was an error opening or creating the out file.\n", 52, 0) <0 )
-                                perror("sending stream message");
-                            printf("There was an error opening or creating the out file.\n");
-                        } else {
-                            dup2(fd1,1);
-                        }
-                    } else {
-                    //fprintf(stderr, "%%%%%%duping psd to stdout\n");
-                        dup2(psd,1);
-                    }
-
-
-                    if(strlen(thisCommand[1].infile) > 0) {
-
-                        fd2 = getFileD(thisCommand[1].infile, paths, numPaths, false);
-                        if(fd2 == -1) {
-                            printf("There was an error opening the input file.\n");
-                            if(send(psd, "There was an error opening the input file.\n", 43, 0) <0 )
-                                perror("sending stream message");
-                            // TODO: make sure jobis not in jobs list
-                            continue;
-                        } else {
-                            dup2(fd2,0);
-                        }
-                    }
-                    //fprintf(stderr, "Numcmds for cmdArray is: %d\n", thisCommand[1].numCmds);
-                    char* cmdArray[thisCommand[1].numCmds+1];
-                    for (int i=0; i<thisCommand[1].numCmds; i++) {
-                        cmdArray[i] = thisCommand[1].cmd[i];
-                        fprintf(stderr, "Creating command array: %s\n", cmdArray[i]);
-                    }
-                    cmdArray[thisCommand[1].numCmds] = NULL;
-                    fprintf(stderr, "Calling exec 2::%s:: Array[0]::%s:: Array[1]::%s::\n", thisCommand[1].cmd[0], cmdArray[0], cmdArray[1]);
-                    execvpe(thisCommand[1].cmd[0], cmdArray, environ);
-                    printf("There was an error with the command!\n");
-                    if (fd1 != -1) close(fd1);
-                    exit(2);
-
-                } else {
-
-                    close(pipefd[1]);
-                    if(thisCommand[1].isForeground) {
-                        //TODO: does this do anything?
-                        //printf("This is a forground task\n");
-                        //printf("Waiting on PID: %d\n", ret);
-                        int checkpid = waitpid(ret, &status, WUNTRACED|WNOHANG);
-                        while(1) {
-                            if(checkpid == ret) {
-                                if(WIFEXITED(status)) {                     
-                                    printDoneJob(currentCmd,lastRemovedJobId,psd); 
-                                    break;
-                                } else if (WIFSTOPPED(status)) {
-                                    break;
-                                } else if (WIFSIGNALED(status)) {
-                                    if(WTERMSIG(status) == SIGINT) {
-                                        printDoneJob(currentCmd,lastRemovedJobId, psd);    
-                                        break;
-                                    }   
-                                }
+                            fd1 = getFileD(thisCommand[1].outfile, paths, numPaths, true);
+                            if(fd1 == -1)
+                            {
+                                if(send(psd, "There was an error opening or creating the out file.\n", 52, 0) <0 )
+                                    perror("sending stream message");
+                                printf("There was an error opening or creating the out file.\n");
+                            } else {
+                                dup2(fd1,1);
                             }
-
-                            if( (rc=recv(psd, recBuf, sizeof(recBuf), MSG_DONTWAIT)) < 0){
-                                //perror("ERROR receiving stream  message");
-                                //TODO: take out?
-                                //exit(-1);
-                            }  
-                            if(rc > 0) {
-                                fprintf(stderr," GOT A CONTROL\n");
-                                if(strstr(recBuf, "CTL") == &recBuf[0]){
-                                    if(strstr(recBuf,"c") == &recBuf[4] ) {
-                                        //Ctrl-c - To stop the current running command (on the server)
-                                        fprintf(stderr," GOT A CONTROL, sending SIGSTOP to PID: %d\n", ret);
-                                        kill(ret, SIGKILL);
-                                    } else if (strstr(recBuf,"z") == &recBuf[4]) {
-                                        //Ctrl-z  - To suspend the current running command (on the server)
-                                        kill(ret, SIGINT);   
-                                        fprintf(stderr," GOT A CONTROL, sending SIGINT to PID: %d\n", ret);                            
-                                    }
-                                } 
-                                break;                           
-                            } 
-                            checkpid = waitpid(ret, &status, WUNTRACED|WNOHANG);
+                        } else {
+                        //fprintf(stderr, "%%%%%%duping psd to stdout\n");
+                            dup2(psd,1);
                         }
-                        //printf("WIFSTOPPED1: %d\n", WIFSTOPPED(status));
-                        //printf("WIFEXITED1: %d\n", WIFEXITED(status));
+
+
+                        if(strlen(thisCommand[1].infile) > 0) {
+
+                            fd2 = getFileD(thisCommand[1].infile, paths, numPaths, false);
+                            if(fd2 == -1) {
+                                printf("There was an error opening the input file.\n");
+                                if(send(psd, "There was an error opening the input file.\n", 43, 0) <0 )
+                                    perror("sending stream message");
+                                // TODO: make sure jobis not in jobs list
+                                continue;
+                            } else {
+                                dup2(fd2,0);
+                            }
+                        }
+                        //fprintf(stderr, "Numcmds for cmdArray is: %d\n", thisCommand[1].numCmds);
+                        char* cmdArray[thisCommand[1].numCmds+1];
+                        for (int i=0; i<thisCommand[1].numCmds; i++) {
+                            cmdArray[i] = thisCommand[1].cmd[i];
+                            fprintf(stderr, "Creating command array: %s\n", cmdArray[i]);
+                        }
+                        cmdArray[thisCommand[1].numCmds] = NULL;
+                        fprintf(stderr, "Calling exec 2::%s:: Array[0]::%s:: Array[1]::%s::\n", thisCommand[1].cmd[0], cmdArray[0], cmdArray[1]);
+                        execvpe(thisCommand[1].cmd[0], cmdArray, environ);
+                        printf("There was an error with the command!\n");
+                        if (fd1 != -1) close(fd1);
+                        exit(2);
+
                     } else {
-                        //printf("This is a background task\n");
-                        continue;
-                    }
+
+                        close(pipefd[1]);
+                        if(thisCommand[1].isForeground) {
+                            //TODO: does this do anything?
+                            //printf("This is a forground task\n");
+                            //printf("Waiting on PID: %d\n", ret);
+                            int checkpid = waitpid(ret, &status, WUNTRACED|WNOHANG);
+                            while(1) {
+                                if(checkpid == ret) {
+                                    if(WIFEXITED(status)) {                     
+                                        printDoneJob(currentCmd,lastRemovedJobId,psd); 
+                                        break;
+                                    } else if (WIFSTOPPED(status)) {
+                                        break;
+                                    } else if (WIFSIGNALED(status)) {
+                                        if(WTERMSIG(status) == SIGINT) {
+                                            printDoneJob(currentCmd,lastRemovedJobId, psd);    
+                                            break;
+                                        }   
+                                    }
+                                }
+
+                                if( (rc=recv(psd, recBuf, sizeof(recBuf), MSG_DONTWAIT)) < 0){
+                                    //perror("ERROR receiving stream  message");
+                                    //TODO: take out?
+                                    //exit(-1);
+                                }  
+                                if(rc > 0) {
+                                    fprintf(stderr," GOT A CONTROL\n");
+                                    if(strstr(recBuf, "CTL") == &recBuf[0]){
+                                        if(strstr(recBuf,"c") == &recBuf[4] ) {
+                                            //Ctrl-c - To stop the current running command (on the server)
+                                            fprintf(stderr," GOT A CONTROL, sending SIGSTOP to PID: %d\n", ret);
+                                            kill(ret, SIGKILL);
+                                        } else if (strstr(recBuf,"z") == &recBuf[4]) {
+                                            //Ctrl-z  - To suspend the current running command (on the server)
+                                            kill(ret, SIGINT);   
+                                            fprintf(stderr," GOT A CONTROL, sending SIGINT to PID: %d\n", ret);                            
+                                        }
+                                    } 
+                                    break;                           
+                                } 
+                                checkpid = waitpid(ret, &status, WUNTRACED|WNOHANG);
+                            }
+                            //printf("WIFSTOPPED1: %d\n", WIFSTOPPED(status));
+                            //printf("WIFEXITED1: %d\n", WIFEXITED(status));
+                        } else {
+                            //printf("This is a background task\n");
+                            continue;
+                        }
                     
-                }
+                    }
+                }    
                 
             }
             if(thisCommand[0].isForeground) {
