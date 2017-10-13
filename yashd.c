@@ -281,8 +281,6 @@ int main(int argc, char **argv ) {
     
     server.sin_addr.s_addr = htonl(INADDR_ANY);
     if (argc == 1) {
-        fprintf(stderr, "The arg count is 1\n");
-        //server.sin_port = htons(0); 
         server.sin_port = htons(3826); 
     }
     else  {
@@ -296,25 +294,25 @@ int main(int argc, char **argv ) {
     sd = socket (AF_INET,SOCK_STREAM,IPPROTO_TCP); 
     /* OR sd = socket (hp->h_addrtype,SOCK_STREAM,0); */
     if (sd<0) {
-	    perror("opening stream socket");
-	    exit(-1);
+        perror("opening stream socket");
+        exit(-1);
     }
 
     /** this allow the server to re-start quickly instead of fully wait
-	for TIME_WAIT which can be as large as 2 minutes */
+    for TIME_WAIT which can be as large as 2 minutes */
     reusePort(sd);
     //setTimeout(sd);
     if ( bind( sd, (struct sockaddr *) &server, sizeof(server) ) < 0 ) {
-	    close(sd);
-	    perror("binding name to stream socket");
-	    exit(-1);
+        close(sd);
+        perror("binding name to stream socket");
+        exit(-1);
     }
     
     /** get port information and  prints it out */
     length = sizeof(server);
     if ( getsockname (sd, (struct sockaddr *)&server,&length) ) {
-	    perror("getting socket name");
-	    exit(0);
+        perror("getting socket name");
+        exit(0);
     }
     
     listen(sd,4);
@@ -325,7 +323,7 @@ int main(int argc, char **argv ) {
 
 
         fprintf(stderr, "****Waiting on new connection....\n");
-	    psd  = accept(sd, (struct sockaddr *)&from, &fromlen);
+        psd  = accept(sd, (struct sockaddr *)&from, &fromlen);
         fprintf(stderr, "****Got connection\n");
         struct threadInput argin = {psd, from, RUNNING,0, log2};
         threadInputList[currentThread] = argin;
@@ -340,13 +338,9 @@ int main(int argc, char **argv ) {
             //fprintf(stderr, "****Checking threads, current thread is: %d This [i] is: %d\n", currentThread, i);
             struct threadInput thisInput = threadInputList[i];
             if(thisInput.threadComplete == COMPLETE) {
-                fprintf(stderr, "****Trying to join\n");
                 pthread_join(threadList[i], NULL);
-                fprintf(stderr, "****Completed thread %d\n", thisInput.threadId);
             }    
         }
-        //fprintf(stderr, "****Current thread is %d\n", currentThread);
-        //return EXIT_SUCCESS;
     }    
     fclose(log2); 
     
@@ -396,9 +390,8 @@ void* yash(void* inputs) {
         char** paths = getTokenizedList(currpath, ":", &numPaths);
         //fflush(stdin);
         fprintf(stderr, "\n...server is waiting...\n");
-        if(send(psd, "\n #", 2, 0) <0 )
+        if(send(psd, " #\n", 2, 0) <0 )
             perror("sending stream message");
-        fprintf(stderr,"Sent message...\n");
         char* env_list[] = {};
 
         if( (rc=recv(psd, recBuf, sizeof(recBuf), 0)) < 0){
@@ -424,7 +417,6 @@ void* yash(void* inputs) {
                 fprintf(stderr,"There was an error with the input.\n");
                 if(send(psd, "There was an error with the input.\n", 34, 0) <0 )
                     perror("sending stream message");
-                fprintf(stderr,"Sent message...\n");
                 continue;
             }
             if(strcmp(recBuf,"") == 0)
@@ -439,7 +431,6 @@ void* yash(void* inputs) {
             }
             writeLog(cmdLog, buf, inet_ntoa(from.sin_addr),ntohs(from.sin_port));
             if(strcmp(buf,"jobs ") == 0) {
-                fprintf(stderr, "GOT JOBS CMD\n");
                 printJobs(jobs,psd);
                 continue;
             } else if(strcmp(buf,"bg ") == 0) {
@@ -507,7 +498,6 @@ void* yash(void* inputs) {
 
 
             if(!thisCommand->isForeground) {
-                fprintf(stderr,"This is background job pushing printBuf: %s\n", printBuf);
                 pushJob(jobs,printBuf,true,true,jobsSize,jobsSize);
                 jobsSize++;
             } else {
@@ -537,8 +527,7 @@ void* yash(void* inputs) {
                     if(fd2 == -1) {
                         printf("There was an error opening the input file.\n");
                         if(send(psd, "There was an error opening the input file.\n", 43, 0) <0 )
-                            perror("sending stream message");
-                        fprintf(stderr,"Sent message...\n");                   
+                            perror("sending stream message");                  
                         // TODO: make sure jobis not in jobs list
                         continue;
                     } else {
@@ -554,7 +543,6 @@ void* yash(void* inputs) {
                         if(send(psd, "There was an error opening or creating the out file.\n", 52, 0) <0 )
                             perror("sending stream message");
                         printf("There was an error opening or creating the out file.\n");
-                        fprintf(stderr,"Sent message...\n");
                     } else {
                         dup2(fd1,1);
                     }   
@@ -565,7 +553,7 @@ void* yash(void* inputs) {
 
 
                 //printf("READER calling exec: %s\n", thisCommand[0].cmd[0]);
-                fprintf(stderr, "Numcmds for cmdArray is: %d", thisCommand[0].numCmds);
+                //fprintf(stderr, "Numcmds for cmdArray is: %d\n", thisCommand[0].numCmds);
                 char* cmdArray2[thisCommand[0].numCmds+1];
                 for (int i=0; i<thisCommand[0].numCmds; i++) {
                     cmdArray2[i] = thisCommand[0].cmd[i];
@@ -653,7 +641,6 @@ void* yash(void* inputs) {
                             if(send(psd, "There was an error opening or creating the out file.\n", 52, 0) <0 )
                                 perror("sending stream message");
                             printf("There was an error opening or creating the out file.\n");
-                            fprintf(stderr,"Sent message...\n");
                         } else {
                             dup2(fd1,1);
                         }
@@ -670,14 +657,13 @@ void* yash(void* inputs) {
                             printf("There was an error opening the input file.\n");
                             if(send(psd, "There was an error opening the input file.\n", 43, 0) <0 )
                                 perror("sending stream message");
-                            fprintf(stderr,"Sent message...\n");
                             // TODO: make sure jobis not in jobs list
                             continue;
                         } else {
                             dup2(fd2,0);
                         }
                     }
-                    fprintf(stderr, "Numcmds for cmdArray is: %d", thisCommand[1].numCmds);
+                    //fprintf(stderr, "Numcmds for cmdArray is: %d\n", thisCommand[1].numCmds);
                     char* cmdArray[thisCommand[1].numCmds+1];
                     for (int i=0; i<thisCommand[1].numCmds; i++) {
                         cmdArray[i] = thisCommand[1].cmd[i];
@@ -821,7 +807,6 @@ void pushJob(struct Job* head, char* thisCmd, bool isRun, bool isRecent, int siz
 {
 
     struct Job* current = head;
-    fprintf(stderr, "Pushing job for: %s\n", thisCmd);
     if(current != NULL) {
         while(current->nextJob != NULL) {
             current->isMostRecent = false;
@@ -897,33 +882,32 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
    
     int position = 0;
     buf2 = malloc(sizeof(char*) * strlen(buf));
-    fprintf(stderr, "starting parse input, original buf: %s\n and buf2: %s\n", buf, buf2);
+    //fprintf(stderr, "starting parse input, original buf: %s\n and buf2: %s\n", buf, buf2);
     unsigned long count = strlen(buf);
-    fprintf(stderr, "The stringlenth of buf is: %lu\n", count);
+    //fprintf(stderr, "The stringlenth of buf is: %lu\n", count);
     for(unsigned long i=0; i < count; i++) {
         if(buf[i] == '|' && !*haspipe) {
-            fprintf(stderr, "Buf i was pipe and we just set pipe to true. Assigning buf[%lu]: bs 0 incrementing i and setting next to bs 0\n", i);
+            //fprintf(stderr, "Buf i was pipe and we just set pipe to true. Assigning buf[%lu]: bs 0 incrementing i and setting next to bs 0\n", i);
             buf[i] = '\0';
             *haspipe = true;
             i++;
             buf[i] = '\0';
         } else if(buf[i] == '|' && *haspipe) {
-            fprintf(stderr, "Found a second pipe returnin NULL\n");
+            //fprintf(stderr, "Found a second pipe returnin NULL\n");
             return NULL;
         } else if (*haspipe) {
-            fprintf(stderr, "Now we have a pipe assigning buf2[%d]::%c:: and incrementing position from %d setting buf[%lu] to bs 0\n", position, buf[i], position, i);
+            //fprintf(stderr, "Now we have a pipe assigning buf2[%d]::%c:: and incrementing position from %d setting buf[%lu] to bs 0\n", position, buf[i], position, i);
             buf2[position] = buf[i];
             position++;
             buf[i] = '\0';
         }
 
     }
-    fprintf(stderr, "starting parse input, original buf: %s\n and buf2: %s\n", buf, buf2);
     buf = trimTrailingWhitespace(buf);
     if (*haspipe) {
         buf2 = trimTrailingWhitespace(buf2);
     }
-    fprintf(stderr, "starting parse input, original buf: %s\n and buf2: %s\n", buf, buf2);
+    //fprintf(stderr, "starting parse input, original buf: %s\n and buf2: %s\n", buf, buf2);
     fprintf(stderr, "ParseInput::Calling create command on buf::%s::\n",buf);
     struct Command retCmd = createCommand(buf);
     //TODO - start here with debug....
@@ -932,7 +916,7 @@ struct Command* parseInput(char* buf, char* buf2, bool* haspipe)
     if(retCmd.cmd == NULL)  return NULL;
     struct Command* cmdList;
     struct Command retcmd2;
-    fprintf(stderr, "starting parse input, original buf: %s\n and buf2: %s\n", buf, buf2);
+    //fprintf(stderr, "starting parse input, original buf: %s\n and buf2: %s\n", buf, buf2);
     if(*haspipe) {
         cmdList = malloc(2 * sizeof(struct Command));
         cmdList[1] = retCmd;
@@ -989,7 +973,7 @@ struct Command createCommand(char* buf) {
     char** cmds = malloc(sizeof(char*) * numCmds);
     char* token = strtok(buf, " ");
     int position = 0;
-    fprintf(stderr,"About to tokenize\n");
+    //fprintf(stderr,"About to tokenize\n");
     while(token) {
         fprintf(stderr, "%s\n", token);
         cmds[position] =token;
@@ -1000,9 +984,9 @@ struct Command createCommand(char* buf) {
     char* infile = "";
     char* outfile = "";
     for(int i=0; i < numCmds; i++) {
-        fprintf(stderr, "In first for loop \n");
+        //fprintf(stderr, "In first for loop \n");
         if((strcmp(cmds[i],"&") == 0) && isFor) {
-            fprintf(stderr, "In if\n");
+            //fprintf(stderr, "In if\n");
             isFor = false;
             numCmds--;
             if(i<numCmds) {
@@ -1121,38 +1105,31 @@ void printJob(struct Job* jobsList, int pid, bool jobDone, int psd) {
                 asprintf(&msg,"[%d]", current->id);
                 if(send(psd, msg, strlen(msg), 0) <0 )
                     perror("sending stream message");
-                fprintf(stderr,"Sent message...\n");
                 if(current->isMostRecent) { 
                     asprintf(&msg, " +");
                     if(send(psd, msg, strlen(msg), 0) <0 )
                         perror("sending stream message");
-                    fprintf(stderr,"Sent message...\n");
                 } else {
                     asprintf(&msg, " -");
                     if(send(psd, msg, strlen(msg), 0) <0 )
                         perror("sending stream message");
-                    fprintf(stderr,"Sent message...\n");
                 }
                 if(current->isRunning) {
                     asprintf(&msg, " Running ");
                     if(send(psd, msg, strlen(msg), 0) <0 )
                         perror("sending stream message");
-                    fprintf(stderr,"Sent message...\n");
                 } else if (jobDone) {
                     asprintf(&msg, " Done ");
                     if(send(psd, msg, strlen(msg), 0) <0 )
-                        perror("sending stream message");
-                    fprintf(stderr,"Sent message...\n");
+                        perror("sending stream message");;
                 } else {
                     asprintf(&msg, " Stopped ");
                     if(send(psd, msg, strlen(msg), 0) <0 )
                         perror("sending stream message");
-                    fprintf(stderr,"Sent message...\n");
                 }
                 asprintf(&msg, " %s\n", current->cmd);
                 if(send(psd, msg, strlen(msg), 0) <0 )
                     perror("sending stream message");
-                fprintf(stderr,"Sent message...\n");
                 //printf(" PID: %d\n", current->pid);
                 return;
             }    
@@ -1166,7 +1143,6 @@ void printDoneJob(char* cmd,int jobId, int psd) {
     asprintf(&msg, "\n[%d] + Done  %s\n", jobId, cmd);
     if(send(psd, msg, strlen(msg), 0) <0 )
         perror("sending stream message");
-    fprintf(stderr,"Sent message...\n");
 }
 int foreground(int psd) 
 {
@@ -1263,7 +1239,6 @@ void writeLog(FILE* log, char * commandToLog, char* server, int port) {
     struct tm* tm = localtime(&t);
     strftime(formatTime,sizeof(formatTime),"%b %d %T", tm);
     fprintf(log, "%s yashd[%s:%d]: %s\n", formatTime, server, port, commandToLog);
-    fprintf(stderr, "WRITING LOG!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
     fflush(log);
     ret = sem_post(&logSemaphore);
     if (ret != 0) {
@@ -1274,16 +1249,15 @@ void writeLog(FILE* log, char * commandToLog, char* server, int port) {
 
 char* parseCommand(char* thisCommand) {
 
-    fprintf(stderr,"Into parse command: %s\n", thisCommand);
     fprintf(stderr,"thisCommand[0]: %s\n", &thisCommand[0]);
     fprintf(stderr,"Into parse command: %s\n", &thisCommand[4]);
     char* retString = "";
 
     if(strstr(thisCommand, "CMD") == &thisCommand[0]) {
-        fprintf(stderr,"Parse command allocating size %lu\n", strlen(thisCommand)-4);
+        //fprintf(stderr,"Parse command allocating size %lu\n", strlen(thisCommand)-4);
         retString = malloc(sizeof(char*) * (strlen(thisCommand) -4));
         memcpy(retString, &thisCommand[4], (sizeof(char*) * (strlen(thisCommand) -4)));
-        fprintf(stderr,"Return string is: %s\n", retString);
+        //fprintf(stderr,"Return string is: %s\n", retString);
     } else if(strstr(thisCommand, "CTL") == &thisCommand[0]){
         if(strstr(thisCommand,"c") == &thisCommand[4] ) {
             retString = "Ctrl-c\n";
