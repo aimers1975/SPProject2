@@ -83,11 +83,11 @@ char** getTokenizedList(char*, char*, int*);
 int getFileD(char*, char**, int, bool);
 void printJobs(struct Job*,int);
 void pushJob(struct Job*, char*, bool, bool, int, int);
-int removeJob(struct Job*, int);
+int removeJob(struct Job*, int, int*);
 int removeLastJob(struct Job*);
 int updatePID(struct Job*, int);
-int foreground();
-int background(int);
+int foreground(int,int*,struct Job*);
+int background(int, struct Job*);
 bool resetMostRecent(struct Job*);
 void printJob(struct Job*, int, bool, int);
 void printDoneJob(char*,int,int);
@@ -98,12 +98,11 @@ void* yash(void*);
 char* parseCommand(char *);
 void writeLog(FILE*, char*, char*, int);
 
-pid_t currentChildPID=-1;
+pid_t currentChildPID1=-1;
+pid_t currentChildPID2=-1;
 char* currentCmd = NULL;
 bool currentHasPipe = false;
-int lastRemovedJobId = -1;
-int jobsSize = 1;
-struct Job* jobs;
+
 sem_t logSemaphore;
 static FILE *log;
  
@@ -360,6 +359,9 @@ void* yash(void* inputs) {
     char recBuf[MAX_BUFFER];
     int rc;
     struct  hostent *hp, *gethostbyname();
+    int lastRemovedJobId = -1;
+    int jobsSize = 1;
+    struct Job* jobs;
     FILE* cmdLog = threadData->log2;
 
     jobs = malloc(sizeof(struct Job));
@@ -434,10 +436,10 @@ void* yash(void* inputs) {
                 printJobs(jobs,psd);
                 continue;
             } else if(strcmp(buf,"bg ") == 0) {
-                background(psd);
+                background(psd, jobs);
                 continue;
             } else if(strcmp(buf, "fg ") == 0) {
-                pid_t ret2 = foreground();
+                pid_t ret2 = foreground(psd,&lastRemovedJobId,jobs);
                 fprintf(stderr," WAITING ON PID FG\n");
                 int checkpid = waitpid(ret2, &status, WUNTRACED|WNOHANG);
                 while(1) {
@@ -512,11 +514,17 @@ void* yash(void* inputs) {
             }
 
             pid_t ret3 = fork();
-            currentChildPID = ret3;
+            if(ret3 > 0) {
 
+                currentChildPID1 = ret3;
+                fprintf(stderr, "Set currentChildPID1: %d\n", currentChildPID1);
+            }
+            
             if (ret3 == 0) 
             {
+                sleep(1);
 
+                fprintf(stderr, "In first child childpid(ret3): %d and currentChildPID1: %d\n", getpid(), currentChildPID1);
                 if(haspipe) {
                     dup2(pipefd[0],0);
                     close(pipefd[1]);
@@ -625,9 +633,14 @@ void* yash(void* inputs) {
                 if (haspipe) {
 
                     pid_t ret = fork();
-                    
-                    if(ret ==0) { 
+                    if(ret > 0) {
                         
+                        currentChildPID2 = ret;
+                        fprintf(stderr, "Setting currentChildPID2: %d\n", currentChildPID2);
+                    }
+                    if(ret ==0) { 
+                        sleep(1);
+                        fprintf(stderr, "In second child childpid(ret): %d and currentChildPID1: %d currentChildPID2: %d\n", getpid(), currentChildPID1, currentChildPID2);
                         if(haspipe) {
                             currentHasPipe = true;
                             dup2(pipefd[1],1);
@@ -671,12 +684,13 @@ void* yash(void* inputs) {
                         }
                         cmdArray[thisCommand[1].numCmds] = NULL;
                         fprintf(stderr, "Calling exec 2::%s:: Array[0]::%s:: Array[1]::%s::\n", thisCommand[1].cmd[0], cmdArray[0], cmdArray[1]);
+                        fprintf(stderr, "In second child childpid(ret): %d and currentChildPID1: %d currentChildPID2: %d\n", getpid(), currentChildPID1, currentChildPID2);
                         execvpe(thisCommand[1].cmd[0], cmdArray, environ);
                         printf("There was an error with the command!\n");
                         if (fd1 != -1) close(fd1);
                         exit(2);
 
-                    } else {
+                    } else if (ret > 0) {
 
                         close(pipefd[1]);
                         if(thisCommand[1].isForeground) {
@@ -709,12 +723,13 @@ void* yash(void* inputs) {
                                     if(strstr(recBuf, "CTL") == &recBuf[0]){
                                         if(strstr(recBuf,"c") == &recBuf[4] ) {
                                             //Ctrl-c - To stop the current running command (on the server)
-                                            fprintf(stderr," GOT A CONTROL, sending SIGSTOP to PID: %d\n", ret);
+                                            fprintf(stderr," GOT A CONTROL, sending SIGSTOP to PID ret %d and currentChildPID1 %d\n", ret, currentChildPID1);
+                                            kill(currentChildPID1,SIGKILL);
                                             kill(ret, SIGKILL);
                                         } else if (strstr(recBuf,"z") == &recBuf[4]) {
                                             //Ctrl-z  - To suspend the current running command (on the server)
-                                            kill(ret, SIGINT);   
-                                            fprintf(stderr," GOT A CONTROL, sending SIGINT to PID: %d\n", ret);                            
+                                            //kill(ret, SIGINT);   
+                                            fprintf(stderr," GOT A CONTROL, BUT PIPE, should NOT Signint here!!!: %d\n", ret);                            
                                         }
                                     } 
                                     break;                           
@@ -736,29 +751,42 @@ void* yash(void* inputs) {
 
                 int checkpid2 = waitpid(ret3, &status, WUNTRACED|WNOHANG);
                 //printf("Waiting on PID: %d check pid: %d\n", ret3, checkpid2);
+                bool printOnce = false;
                 while(1) {
                    //printf("In loop\n");
-                    //fprintf(stderr," WAITING ON PID 3\n");                  
+                    if(!printOnce) {
+                        printOnce = true;
+                        fprintf(stderr," WAITING ON PID 3: %d\n", ret3);
+                    }
+                                      
                     if(checkpid2 == ret3) {
+                        fprintf(stderr," GOT A STATUS PID 3: %d\n", ret3);
                         if(WIFEXITED(status)) {
-                            //printf("Exited, exit status %d\n", WEXITSTATUS(status));
+                            fprintf(stderr,"Exited, exit status %d\n", WEXITSTATUS(status));
                             printJob(jobs,ret3,true, psd); 
                             break;
                         } else if (WIFSTOPPED(status)) {
+                            fprintf(stderr,"Stopped, exit status %d\n", WIFSTOPPED(status));
                             break;
                         } else if (WIFSIGNALED(status)) {
-                            //printf("Signal is: %d\n", WTERMSIG(status));
+                            fprintf(stderr, "Signal is: %d\n", WTERMSIG(status));
                             if(WTERMSIG(status) == SIGINT) {
                                 printJob(jobs,ret3,true, psd);   
+                                break;
+                            } else if(WTERMSIG(status) == SIGKILL) {
+                                fprintf(stderr, "Signal is sigkill breaking:n");
                                 break;
                             }   
                         }
                     } 
+
+                    fprintf(stderr, "WAITING ON MSG\n");
                     if( (rc=recv(psd, recBuf, sizeof(recBuf), MSG_DONTWAIT)) < 0){
                         //perror("ERROR receiving stream  message");
                         //TODO: take out?
                         //exit(-1);
-                    }  
+                    }
+                    fprintf(stderr, "Moving on!!!\n");  
                     if(rc > 0) {
                         fprintf(stderr," GOT A CONTROL\n");
                         if(strstr(recBuf, "CTL") == &recBuf[0]){
@@ -825,14 +853,14 @@ void pushJob(struct Job* head, char* thisCmd, bool isRun, bool isRecent, int siz
 
 }
 
-int removeJob(struct Job* jobsList, int pid) {
+int removeJob(struct Job* jobsList, int pid, int* lastRemovedJobId) {
     struct Job* current = jobsList;
     struct Job* previous = NULL;
     while(current != NULL) {
         if(current->pid == pid)
         {
             previous->nextJob = current->nextJob;
-            lastRemovedJobId = current->id;
+            *lastRemovedJobId = current->id;
             free(current);
             resetMostRecent(jobsList);
             return pid;
@@ -1145,7 +1173,7 @@ void printDoneJob(char* cmd,int jobId, int psd) {
     if(send(psd, msg, strlen(msg), 0) <0 )
         perror("sending stream message");
 }
-int foreground(int psd) 
+int foreground(int psd, int* lastRemovedJobId, struct Job* jobs) 
 {
     struct Job* current = jobs;
     while(current != NULL) {
@@ -1160,9 +1188,9 @@ int foreground(int psd)
                 if(send(psd, msg, strlen(msg), 0) <0 )
                     perror("sending stream message");
                 fprintf(stderr,"Sent FOREGROUND message...\n");
-                currentChildPID = current->pid;
-                lastRemovedJobId = current->id;
-                removeJob(jobs,current->pid);
+                currentChildPID1 = current->pid;
+                *lastRemovedJobId = current->id;
+                removeJob(jobs,current->pid,lastRemovedJobId);
                 kill(current->pid, SIGCONT);
                 return current->pid;
             }               
@@ -1173,7 +1201,7 @@ int foreground(int psd)
     return -1;
 }
 
-int background(int psd) 
+int background(int psd, struct Job* jobs) 
 {
     struct Job* current = jobs;
     while(current != NULL) {
@@ -1184,9 +1212,9 @@ int background(int psd)
                 if(!current->isRunning) {
                     currentCmd = current->cmd;
                     //printf("%s\n", currentCmd);
-                    currentChildPID = current->pid;
+                    currentChildPID1 = current->pid;
                     current->isRunning = true;
-                    printJob(jobs,currentChildPID,false,psd);
+                    printJob(jobs,currentChildPID1,false,psd);
                     kill(current->pid, SIGCONT);
                     return current->pid;
                 }    
