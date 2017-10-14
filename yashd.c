@@ -1,3 +1,7 @@
+// Amy Reed - yashd.c
+// UTEID alr2434
+// This HW was started based on the sockets client and server examples, daeomon examples, and thread examples from class.
+// There is code directly copied from these examples.
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <sys/types.h>
@@ -33,8 +37,7 @@ extern int errno;
 extern char** environ;
 
 #define PATHMAX 255
-static char u_server_path[PATHMAX+1] = "/tmp";  /* default */
-//static char u_socket_path[PATHMAX+1];
+static char u_server_path[PATHMAX+1] = "/tmp";  
 static char u_log_path[PATHMAX+1];
 static char u_pid_path[PATHMAX+1];
 
@@ -437,7 +440,9 @@ void* yash(void* inputs) {
                 printJobs(jobs,psd);
                 continue;
             } else if(strcmp(buf,"bg ") == 0) {
+                fprintf(stderr, "Backgroundground currentChildPID1: %d\n", currentChildPID1);
                 background(psd, jobs, currentCmd, currentChildPID1);
+                fprintf(stderr, "Backgroundground currentChildPID1: %d\n", currentChildPID1);
                 continue;
             } else if(strcmp(buf, "fg ") == 0) {
                 fprintf(stderr, "Foreground currentChildPID1: %d\n", currentChildPID1);
@@ -492,11 +497,11 @@ void* yash(void* inputs) {
                                 //Ctrl-z  - To suspend the current running command (on the server)
                                 if(!currentHasPipe) {
                                     if(lastRemovedJobId == jobsSize-1) { 
-                                        fprintf(stderr, "PUshing job::%s::\n", currentCmd);
-                                        pushJob(jobs, currentCmd, false,true,lastRemovedJobId,currentChildPID1);
+                                        fprintf(stderr, "PUshing job::%s:: currentChildPID1: %d\n", currentCmd, ret2);
+                                        pushJob(jobs, currentCmd, false,true,lastRemovedJobId,ret2);
                                         lastRemovedJobId = -1;
                                     } else {
-                                        fprintf(stderr, "Pushing job::%s::\n", currentCmd);  
+                                        fprintf(stderr, "Pushing job::%s:: currentChildPID: %d\n", currentCmd, ret2);  
                                         pushJob(jobs, currentCmd, false,true,jobsSize,currentChildPID1);
                                         jobsSize++; 
                                     }

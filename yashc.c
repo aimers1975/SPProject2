@@ -1,16 +1,8 @@
-/*
-NAME:           TCPCleint1 
-SYNOPSIS:       TCPCleint1 <hostid> <portnumber> 
-DESCRIPTION:    The program creates a stream socket in the inet domain, 
-                Connect to TCPServer1, 
-                Get messages typed by a user and 
-                Send them to TCPServer1 running on hostid
-                Then it waits for a reply from  the TCPServer1
-                and show it back to the user, with a message
-                indicating if there is an error during the round trip. 
-*/
+// Amy Reed - yashd.c
+// UTEID alr2434
+// This HW was started based on the sockets client and server examples, daeomon examples, and thread examples from class.
+// There is code directly copied from these examples.
 #include <stdio.h>
-/* socket(), bind(), recv, send */
 #include <sys/types.h>
 #include <sys/socket.h> /* sockaddr_in */
 #include <netinet/in.h> /* inet_addr() */
@@ -56,27 +48,27 @@ int main(int argc, char **argv ) {
     gethostname(ThisHost, MAXHOSTNAME);
     /* OR strcpy(ThisHost,"localhost"); */
     
-    printf("----TCP/Cleint running at host NAME: %s\n", ThisHost);
+    //printf("----TCP/Cleint running at host NAME: %s\n", ThisHost);
     if  ( (hp = gethostbyname(ThisHost)) == NULL ) {
-	fprintf(stderr, "Can't find host %s\n", argv[1]);
-	exit(-1);
+	    fprintf(stderr, "Can't find host %s\n", argv[1]);
+	    exit(-1);
     }
     bcopy ( hp->h_addr, &(server.sin_addr), hp->h_length);
-    printf("    (TCP/Cleint INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
+    //printf("    (TCP/Cleint INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
     
     /** get TCPServer-ex2 Host information, NAME and INET ADDRESS */
     
     if  ( (hp = gethostbyname(argv[1])) == NULL ) {
-	addr.sin_addr.s_addr = inet_addr(argv[1]);
-	if ((hp = gethostbyaddr((char *) &addr.sin_addr.s_addr,
+	    addr.sin_addr.s_addr = inet_addr(argv[1]);
+	    if ((hp = gethostbyaddr((char *) &addr.sin_addr.s_addr,
 				sizeof(addr.sin_addr.s_addr),AF_INET)) == NULL) {
-      fprintf(stderr, "Can't find host %s\n", argv[1]);
-      exit(-1);
-	}
+            fprintf(stderr, "Can't find host %s\n", argv[1]);
+            exit(-1);
+	    }
     }
-    printf("----TCP/Server running at host NAME: %s\n", hp->h_name);
+    //printf("----TCP/Server running at host NAME: %s\n", hp->h_name);
     bcopy ( hp->h_addr, &(server.sin_addr), hp->h_length);
-    printf("    (TCP/Server INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
+    //printf("    (TCP/Server INET ADDRESS is: %s )\n", inet_ntoa(server.sin_addr));
     
     /* Construct name of socket to send to. */
     server.sin_family = AF_INET; 
@@ -91,29 +83,29 @@ int main(int argc, char **argv ) {
     /* sd = socket (hp->h_addrtype,SOCK_STREAM,0); */
   
     if (sd<0) {
-	perror("opening stream socket");
-	exit(-1);
+	    perror("opening stream socket");
+	    exit(-1);
     }
 
     /** Connect to TCPServer-ex2 */
     if ( connect(sd, (struct sockaddr *) &server, sizeof(server)) < 0 ) {
-      close(sd);
-      perror("connecting stream socket");
-      exit(0);
+        close(sd);
+        perror("connecting stream socket");
+        exit(0);
     }
     fromlen = sizeof(from);
     if (getpeername(sd,(struct sockaddr *)&from,&fromlen)<0){
-	perror("could't get peername\n");
-      exit(1);
+	    perror("could't get peername\n");
+        exit(1);
     }
-    printf("Connected to TCPServer1: ");
-    printf("%s:%d\n", inet_ntoa(from.sin_addr),
-	   ntohs(from.sin_port));
+    //printf("Connected to TCPServer1: ");
+    //printf("%s:%d\n", inet_ntoa(from.sin_addr),
+	//   ntohs(from.sin_port));
     if ((hp = gethostbyaddr((char *) &from.sin_addr.s_addr,
 			    sizeof(from.sin_addr.s_addr),AF_INET)) == NULL)
-	fprintf(stderr, "Can't find host %s\n", inet_ntoa(from.sin_addr));
+	    fprintf(stderr, "Can't find host %s\n", inet_ntoa(from.sin_addr));
     else
-	printf("(Name is : %s)\n", hp->h_name);
+	    //printf("(Name is : %s)\n", hp->h_name);
     childpid = fork();
     if (childpid == 0) {
         signal(SIGTSTP, SIG_IGN);
@@ -125,21 +117,20 @@ int main(int argc, char **argv ) {
       receive it from SERVER, display it back to USER  */
     
     for(;;) {
-	cleanup(rbuf);
-	if( (rc=recv(sd, rbuf, sizeof(buf), 0)) < 0){
-	    perror("receiving stream  message");
-	    exit(-1);
-	}
-	if (rc > 0){
-	    rbuf[rc]='\0';
-	    printf("%s", rbuf);
-        fflush(stdout);
-	}else {
+	    cleanup(rbuf);
+	    if( (rc=recv(sd, rbuf, sizeof(buf), 0)) < 0){
+	        perror("receiving stream  message");
+	        exit(-1);
+	    }
+	    if (rc > 0){
+	        rbuf[rc]='\0';
+	        printf("%s", rbuf);
+            fflush(stdout);
+	} else {
 	    printf("Disconnected..\n");
 	    close (sd);
 	    exit(0);
 	}
-	
   }
 }
 
@@ -167,7 +158,7 @@ void handleSignal(int signal) {
                 perror("sending stream message");
             break;
         default:
-            printf("Can't find signal.\n");
+            //printf("Can't find signal.\n");
             return;
     }
 }
@@ -177,7 +168,7 @@ void GetUserInput()
     for(;;) {
         fflush(stdout);
     	//Check input for newline, and if so, reprint prompt.
-        fflush(stdout);
+        //fflush(stdout);
     	cleanup(buf);
     	rc=read(0,buf, sizeof(buf));
     	if (rc == 0) break;
@@ -186,7 +177,7 @@ void GetUserInput()
             
         } else {
             char* buf2 = concat("CMD ", buf);
-            printf("Sending %s", buf2);
+            //printf("Sending %s", buf2);
         	if (send(sd, buf2, rc+4, 0) <0 )
         	    perror("sending stream message");
         }
