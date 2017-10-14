@@ -105,6 +105,7 @@ void writeLog(FILE*, char*, char*, int);
 
 sem_t logSemaphore;
 static FILE *log;
+bool debug = false;
  
 
 /**
@@ -601,6 +602,7 @@ void* yash(void* inputs) {
                 } else {
                     //fprintf(stderr, "%%%%%%duping psd to stdout\n");
                     dup2(psd,1);
+                    dup2(psd,STDERR_FILENO);
                 }
 
 
@@ -609,15 +611,15 @@ void* yash(void* inputs) {
                 char* cmdArray2[thisCommand[0].numCmds+1];
                 for (int i=0; i<thisCommand[0].numCmds; i++) {
                     cmdArray2[i] = thisCommand[0].cmd[i];
-                    fprintf(stderr,"Creating cmd array %s\n", cmdArray2[i]);
+                    //fprintf(stderr,"Creating cmd array %s\n", cmdArray2[i]);
                 }
                 cmdArray2[thisCommand[0].numCmds] = NULL;
-                fprintf(stderr, "Calling exec 1:%s:: Array[0]:%s:: Array[1]::%s:: Array[2]::%s::\n", thisCommand[0].cmd[0], cmdArray2[0], cmdArray2[1], cmdArray2[2]);
+                //fprintf(stderr, "Calling exec 1:%s:: Array[0]:%s:: Array[1]::%s:: Array[2]::%s::\n", thisCommand[0].cmd[0], cmdArray2[0], cmdArray2[1], cmdArray2[2]);
                 int execResult = execvpe(thisCommand[0].cmd[0], cmdArray2, environ);
                 //TODO: do we ever execut here?
-                printf("There was an error with the command %d\n!", execResult);
+                printf("There was an error with the command!\n");
 
-                switch(errno)
+                /*switch(errno)
                 {
                     case E2BIG:
                         printf("ERRORIS: E2BIG\n");
@@ -667,7 +669,7 @@ void* yash(void* inputs) {
                     case ETXTBSY:
                         printf("ERRORIS: ETXTBSY\n");
                     break;
-                }
+                }*/
                 if (fd1 != -1) close(fd1);
                 if (fd2 != -1) close(fd2);
                 exit(1);
@@ -704,6 +706,7 @@ void* yash(void* inputs) {
                         } else {
                         //fprintf(stderr, "%%%%%%duping psd to stdout\n");
                             dup2(psd,1);
+                            dup2(psd,STDERR_FILENO);
                         }
 
 
@@ -745,13 +748,13 @@ void* yash(void* inputs) {
                             while(1) {
                                 if(checkpid == ret) {
                                     if(WIFEXITED(status)) {                     
-                                        printDoneJob(currentCmd,lastRemovedJobId,psd); 
+                                        //printDoneJob(currentCmd,lastRemovedJobId,psd); 
                                         break;
                                     } else if (WIFSTOPPED(status)) {
                                         break;
                                     } else if (WIFSIGNALED(status)) {
                                         if(WTERMSIG(status) == SIGINT) {
-                                            printDoneJob(currentCmd,lastRemovedJobId, psd);    
+                                            //printDoneJob(currentCmd,lastRemovedJobId, psd);    
                                             break;
                                         }   
                                     }

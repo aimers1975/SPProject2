@@ -14,7 +14,7 @@
 #include <signal.h>
 
 #define MAXHOSTNAME 80
-#define BUFSIZE 1024
+#define BUFSIZE 8192
 
 char buf[BUFSIZE];
 char rbuf[BUFSIZE];
